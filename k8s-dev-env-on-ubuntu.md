@@ -17,3 +17,7 @@ export PATH=$PATH:$(go env GOPATH)/bin
 ```
 curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
 ```
+
+# References
+
+* [Install kubectl on linux] (https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/)

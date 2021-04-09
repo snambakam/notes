@@ -20,4 +20,4 @@ curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stabl
 
 # References
 
-* [Install kubectl on linux] (https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/)
+* [Install kubectl on linux](https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/)

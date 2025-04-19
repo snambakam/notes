@@ -4,6 +4,7 @@ sudo dnf install -y \
 	autoconf \
 	automake \
 	clang \
+	cmake \
 	curl \
 	gcc \
 	g++ \

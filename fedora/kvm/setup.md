@@ -2,7 +2,7 @@
 
 ```
 sudo dnf install -y \
-    libvirt-daemon-system \
+    libvirt-daemon \
     qemu-system-x86 \
     qemu-utils \
     virt-manager

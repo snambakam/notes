@@ -12,6 +12,7 @@ sudo dnf install -y \
 	git \
 	golang \
 	libtool \
+	mock \
 	wget
 
 #

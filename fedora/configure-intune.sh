@@ -23,39 +23,32 @@ ConfigureSmartcardSettingsForUser() {
     echo "INFO: Configuring settings for user..."
 
     mkdir -p "${NSSDB_DIR}"
-    chmod 700 "${HOME}/.pki"
-    chmod 700 "${NSSDB_DIR}"
+    chmod 700 "${HOME}/.pki" "${NSSDB_DIR}"
 
-    # Create (or ensure) the NSS DB exists
+    # Create NSS DB (used by NSS apps for cert/key storage)
     modutil -force -create -dbdir "sql:${NSSDB_DIR}"
 
-    # Fedora places PKCS#11 modules under %{_libdir}/pkcs11/ (often /usr/lib64/pkcs11/) [3](https://docs.fedoraproject.org/en-US/packaging-guidelines/Pkcs11Support/)
-    # Find OpenSC PKCS#11 module robustly across Fedora variants.
-    local OPENSC_PKCS11=""
-    for candidate in \
-        /usr/lib64/pkcs11/opensc-pkcs11.so \
-        /usr/lib/pkcs11/opensc-pkcs11.so \
-        /usr/lib64/opensc-pkcs11.so \
-        /usr/lib/opensc-pkcs11.so
-    do
-        if [[ -r "${candidate}" ]]; then
-            OPENSC_PKCS11="${candidate}"
-            break
-        fi
-    done
+    # On Fedora, PKCS#11 providers should be registered via p11-kit,
+    # not added per-user with modutil, to avoid duplicate registration. [3](https://docs.fedoraproject.org/en-US/packaging-guidelines/Pkcs11Support/)[1](https://github.com/dogtagpki/pki/issues/3208)
 
-    if [[ -z "${OPENSC_PKCS11}" ]]; then
-        echo "ERROR: Could not find opensc-pkcs11.so on this system." >&2
-        echo "Hint: Ensure 'opensc' is installed, then locate it with:" >&2
-        echo "  rpm -ql opensc | grep opensc-pkcs11.so" >&2
-        exit 1
+    # Verify OpenSC is registered with p11-kit (usually installed as opensc.module).
+    if [[ -r /usr/share/p11-kit/modules/opensc.module ]]; then
+        echo "Found p11-kit OpenSC module config: /usr/share/p11-kit/modules/opensc.module"
+    elif [[ -d /usr/share/p11-kit/modules ]]; then
+        echo "WARNING: /usr/share/p11-kit/modules exists but opensc.module not found."
+        echo "If OpenSC is installed, check with: p11-kit list-modules | grep -i opensc"
+    else
+        echo "WARNING: p11-kit modules directory not found at /usr/share/p11-kit/modules."
     fi
 
-    # Add the smart card module to the user's NSS database
-    modutil -force \
-        -dbdir "sql:${NSSDB_DIR}" \
-        -add 'SC Module' \
-        -libfile "${OPENSC_PKCS11}"
+    # Optional visibility checks (won't fail the script if no token inserted)
+    if command -v p11-kit >/dev/null 2>&1; then
+        echo "p11-kit configured modules (filtered):"
+        p11-kit list-modules 2>/dev/null | grep -i -E 'opensc|pkcs11' || true
+
+        echo "Available tokens:"
+        p11-kit list-tokens 2>/dev/null || true
+    fi
 }
 
 ShowUsage() {

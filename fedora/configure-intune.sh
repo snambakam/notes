@@ -47,7 +47,7 @@ ConfigureSmartcardSettingsForUser() {
         p11-kit list-modules 2>/dev/null | grep -i -E 'opensc|pkcs11' || true
 
         echo "Available tokens:"
-        p11-kit list-tokens 2>/dev/null || true
+        p11-kit list-tokens pkcs11:token 2>/dev/null || true
     fi
 }
 

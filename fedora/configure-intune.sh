@@ -8,6 +8,7 @@ InstallRequiredPackages() {
     sudo dnf install -y \
         pcsc-lite \
         pcsc-lite-ccid \
+        pcsc-tools \
         opensc \
         nss-tools \
         openssl \

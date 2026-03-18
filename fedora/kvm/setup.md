@@ -6,3 +6,11 @@ sudo dnf install -y \
     qemu \
     virt-manager
 ```
+
+## Checkout Kernel Sources
+
+```bash
+git clone https://src.fedoraproject.org/rpms/kernel.git
+cd kernel
+git switch f43
+```

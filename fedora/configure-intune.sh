@@ -12,7 +12,8 @@ InstallRequiredPackages() {
         opensc \
         nss-tools \
         openssl \
-        yubikey-manager
+        yubikey-manager \
+        yubico-piv-tool
 
     # Ensure pcscd is enabled and running (required for CCID/smartcard features)
     sudo systemctl enable --now pcscd

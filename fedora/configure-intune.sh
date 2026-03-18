@@ -4,7 +4,7 @@ set -euo pipefail
 Install_ykcs11_p11kit_module() {
     if [ ! -f /usr/share/p11-kit/modules/ykcs11.module ]; then
         sudo tee /usr/share/p11-kit/modules/ykcs11.module <<-'EOF'
-		module: libykcs11.so
+		module: /usr/lib64/libykcs11.so.2
 		priority: 50
 EOF
     fi
@@ -27,7 +27,7 @@ InstallRequiredPackages() {
     # Ensure pcscd is enabled and running (required for CCID/smartcard features)
     sudo systemctl enable --now pcscd
 
-    Install_ykcs11_p11kit_module() 
+    Install_ykcs11_p11kit_module
 }
 
 ConfigureSmartcardSettingsForUser() {

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 InstallRequiredPackages() {
+    echo "INFO: Installing pre-requisite packages..."
     # Fedora: pcscd is provided by pcsc-lite package [1](https://packages.fedoraproject.org/pkgs/pcsc-lite/pcsc-lite/)
     # Fedora: modutil/certutil are provided by nss-tools [2](https://learn.microsoft.com/en-us/entra/identity/devices/sso-linux)
     sudo dnf install -y \
@@ -18,6 +19,8 @@ InstallRequiredPackages() {
 
 ConfigureSmartcardSettingsForUser() {
     local NSSDB_DIR="${HOME}/.pki/nssdb"
+
+    echo "INFO: Configuring settings for user..."
 
     mkdir -p "${NSSDB_DIR}"
     chmod 700 "${HOME}/.pki"
@@ -65,8 +68,6 @@ ShowUsage() {
 #
 # Main
 #
-INSTALL_PACKAGES=0
-CONFIGURE_USER_ENV=0
 
 optstring="ich"
 
@@ -77,10 +78,12 @@ while getopts "${optstring}" arg; do
       exit 0
       ;;
     i)
-      INSTALL_PACKAGES=1
+      InstallRequiredPackages
+      exit 0
       ;;
     c)
-      CONFIGURE_USER_ENV=1
+      ConfigureSmartcardSettingsForUser
+      exit 0
       ;;
     :)
       echo "$0: Must supply an argument to -${OPTARG}." >&2
@@ -94,11 +97,6 @@ while getopts "${optstring}" arg; do
   esac
 done
 
-if [[ "${INSTALL_PACKAGES}" -eq 1 ]]; then
-    InstallRequiredPackages
-fi
-
-if [[ "${CONFIGURE_USER_ENV}" -eq 1 ]]; then
-    ConfigureSmartcardSettingsForUser
-fi
+InstallRequiredPackages
+ConfigureSmartcardSettingsForUser
 

@@ -1,0 +1,152 @@
+From 143d335cea15484ba180fb83761e58abacabde63 Mon Sep 17 00:00:00 2001
+From: Melody Wang <huibo.wang@amd.com>
+Date: Fri, 24 Apr 2026 17:42:06 +0000
+Subject: [RFC PATCH v1 002/132] KVM: SVM: Add support for the
+ SEV-SNP #HV doorbell page NAE event
+
+To support Restricted Injection, the SEV-SNP guest must register a doorbell
+page for use with #HV. This is done using the #HV doorbell page NAE event.
+
+This event consists of four actions: GET_PREFERRED, SET, QUERY, CLEAR.
+Implement it per the GHCB specification.
+
+Co-developed-by: Thomas Lendacky <thomas.lendacky@amd.com>
+Signed-off-by: Thomas Lendacky <thomas.lendacky@amd.com>
+Signed-off-by: Melody Wang <huibo.wang@amd.com>
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/x86/include/uapi/asm/svm.h |  5 +++
+ arch/x86/kvm/svm/sev.c          | 65 +++++++++++++++++++++++++++++++++
+ arch/x86/kvm/svm/svm.c          |  3 ++
+ arch/x86/kvm/svm/svm.h          |  2 +
+ 4 files changed, 75 insertions(+)
+
+diff --git a/arch/x86/include/uapi/asm/svm.h b/arch/x86/include/uapi/asm/svm.h
+index 010a45c9f614..d84a13ac4627 100644
+--- a/arch/x86/include/uapi/asm/svm.h
++++ b/arch/x86/include/uapi/asm/svm.h
+@@ -117,6 +117,11 @@
+ #define SVM_VMGEXIT_AP_CREATE_ON_INIT		0
+ #define SVM_VMGEXIT_AP_CREATE			1
+ #define SVM_VMGEXIT_AP_DESTROY			2
++#define SVM_VMGEXIT_HVDB_PAGE			0x80000014ull
++#define SVM_VMGEXIT_HVDB_GET_PREFERRED		0
++#define SVM_VMGEXIT_HVDB_SET			1
++#define SVM_VMGEXIT_HVDB_QUERY			2
++#define SVM_VMGEXIT_HVDB_CLEAR			3
+ #define SVM_VMGEXIT_SNP_RUN_VMPL		0x80000018ull
+ #define SVM_VMGEXIT_SAVIC			0x8000001aull
+ #define SVM_VMGEXIT_SAVIC_REGISTER_GPA		0
+diff --git a/arch/x86/kvm/svm/sev.c b/arch/x86/kvm/svm/sev.c
+index 944aaea6501f..7f3e571e2eb2 100644
+--- a/arch/x86/kvm/svm/sev.c
++++ b/arch/x86/kvm/svm/sev.c
+@@ -4262,6 +4262,65 @@ static int snp_handle_ext_guest_req(struct vcpu_svm *svm, gpa_t req_gpa, gpa_t r
+ 	return 1; /* resume guest */
+ }
+ 
++static int sev_snp_hv_doorbell_page(struct vcpu_svm *svm)
++{
++	struct kvm_vcpu *vcpu = &svm->vcpu;
++	struct kvm_host_map hvdb_map;
++	gpa_t hvdb_gpa;
++	u64 request;
++
++	if (!is_sev_snp_guest(vcpu))
++		return -EINVAL;
++
++	request = svm->vmcb->control.exit_info_1;
++	hvdb_gpa = svm->vmcb->control.exit_info_2;
++
++	switch (request) {
++	case SVM_VMGEXIT_HVDB_GET_PREFERRED:
++		ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, ~0ULL);
++		break;
++	case SVM_VMGEXIT_HVDB_SET:
++		svm->sev_es.hvdb_gpa = INVALID_PAGE;
++
++		if (!PAGE_ALIGNED(hvdb_gpa)) {
++			vcpu_unimpl(vcpu, "vmgexit: unaligned #HV doorbell page address [%#llx] from guest\n",
++				    hvdb_gpa);
++			return -EINVAL;
++		}
++
++		if (!page_address_valid(vcpu, hvdb_gpa)) {
++			vcpu_unimpl(vcpu, "vmgexit: invalid #HV doorbell page address [%#llx] from guest\n",
++				    hvdb_gpa);
++			return -EINVAL;
++		}
++
++		/* Map and unmap the GPA just to be sure the GPA is valid */
++		if (kvm_vcpu_map(vcpu, gpa_to_gfn(hvdb_gpa), &hvdb_map)) {
++			vcpu_unimpl(vcpu, "vmgexit: error mapping #HV doorbell page [%#llx] from guest\n",
++				    hvdb_gpa);
++			return -EINVAL;
++		}
++		kvm_vcpu_unmap(vcpu, &hvdb_map);
++
++		svm->sev_es.hvdb_gpa = hvdb_gpa;
++		fallthrough;
++	case SVM_VMGEXIT_HVDB_QUERY:
++		ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, svm->sev_es.hvdb_gpa);
++		break;
++	case SVM_VMGEXIT_HVDB_CLEAR:
++		svm->sev_es.hvdb_gpa = INVALID_PAGE;
++		break;
++	default:
++		svm->sev_es.hvdb_gpa = INVALID_PAGE;
++
++		vcpu_unimpl(vcpu, "vmgexit: invalid #HV doorbell page request [%#llx] from guest\n",
++			    request);
++		return -EINVAL;
++	}
++
++	return 0;
++}
++
+ static int sev_handle_vmgexit_msr_protocol(struct vcpu_svm *svm)
+ {
+ 	struct vmcb_control_area *control = &svm->vmcb->control;
+@@ -4596,6 +4655,12 @@ int sev_handle_vmgexit(struct kvm_vcpu *vcpu)
+ 
+ 		return snp_handle_ext_guest_req(svm, control->exit_info_1,
+ 						control->exit_info_2);
++	case SVM_VMGEXIT_HVDB_PAGE:
++		if (sev_snp_hv_doorbell_page(svm)) {
++			ghcb_set_sw_exit_info_1(svm->sev_es.ghcb, 2);
++			ghcb_set_sw_exit_info_2(svm->sev_es.ghcb, GHCB_ERR_INVALID_INPUT);
++		}
++		return 1;
+ 	case SVM_VMGEXIT_UNSUPPORTED_EVENT:
+ 		/*
+ 		 * Note, the _guest_ is reporting an unsupported #VC, i.e. this
+diff --git a/arch/x86/kvm/svm/svm.c b/arch/x86/kvm/svm/svm.c
+index d0971685034b..190acf62ce6e 100644
+--- a/arch/x86/kvm/svm/svm.c
++++ b/arch/x86/kvm/svm/svm.c
+@@ -1290,6 +1290,9 @@ static void __svm_vcpu_reset(struct kvm_vcpu *vcpu)
+ 
+ 	svm->nmi_masked = false;
+ 	svm->awaiting_iret_completion = false;
++
++	if (is_sev_es_guest(vcpu))
++		svm->sev_es.hvdb_gpa = INVALID_PAGE;
+ }
+ 
+ static void svm_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
+diff --git a/arch/x86/kvm/svm/svm.h b/arch/x86/kvm/svm/svm.h
+index 716be21fba33..d72204a9623d 100644
+--- a/arch/x86/kvm/svm/svm.h
++++ b/arch/x86/kvm/svm/svm.h
+@@ -274,6 +274,8 @@ struct vcpu_sev_es_state {
+ 	gpa_t snp_vmsa_gpa;
+ 	bool snp_ap_waiting_for_reset;
+ 	bool snp_has_guest_vmsa;
++
++	gpa_t hvdb_gpa;
+ };
+ 
+ struct vcpu_svm {
+-- 
+2.55.0
+

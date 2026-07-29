@@ -1,0 +1,106 @@
+From 54fb75cd2b6a6b6919daa7f43adafdf35a6fce14 Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Wed, 6 May 2026 11:49:27 +0000
+Subject: [RFC PATCH v1 053/132] kvm: x86: Introduce max_planes
+ x86-op
+
+Allow x86 hardware backends to overwrite the number of supported
+planes per VM type.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Co-developed-by: Joerg Roedel <joerg.roedel@amd.com>
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/x86/include/asm/kvm-x86-ops.h | 1 +
+ arch/x86/include/asm/kvm_host.h    | 2 ++
+ arch/x86/kvm/svm/svm.c             | 1 +
+ arch/x86/kvm/vmx/main.c            | 1 +
+ arch/x86/kvm/x86.c                 | 8 +++++++-
+ arch/x86/kvm/x86.h                 | 1 +
+ 6 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/include/asm/kvm-x86-ops.h b/arch/x86/include/asm/kvm-x86-ops.h
+index 67fa5baca99e..7c0903b8bb68 100644
+--- a/arch/x86/include/asm/kvm-x86-ops.h
++++ b/arch/x86/include/asm/kvm-x86-ops.h
+@@ -151,6 +151,7 @@ KVM_X86_OP_OPTIONAL_RET0(gmem_max_mapping_level)
+ KVM_X86_OP_OPTIONAL(gmem_invalidate)
+ KVM_X86_OP(alloc_plane)
+ KVM_X86_OP(free_plane)
++KVM_X86_OP(max_planes)
+ #endif
+ 
+ #undef KVM_X86_OP
+diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
+index 28848a0b84ef..b915b4ba0412 100644
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -2032,6 +2032,8 @@ struct kvm_x86_ops {
+ 
+ 	struct kvm_plane *(*alloc_plane)(void);
+ 	void (*free_plane)(struct kvm_plane *);
++
++	unsigned (*max_planes)(struct kvm *);
+ };
+ 
+ struct kvm_x86_nested_ops {
+diff --git a/arch/x86/kvm/svm/svm.c b/arch/x86/kvm/svm/svm.c
+index f497926254c1..c4bfa3a42053 100644
+--- a/arch/x86/kvm/svm/svm.c
++++ b/arch/x86/kvm/svm/svm.c
+@@ -5509,6 +5509,7 @@ struct kvm_x86_ops svm_x86_ops __initdata = {
+ 
+ 	.alloc_plane = x86_alloc_plane,
+ 	.free_plane = x86_free_plane,
++	.max_planes = kvm_x86_default_max_planes,
+ };
+ 
+ /*
+diff --git a/arch/x86/kvm/vmx/main.c b/arch/x86/kvm/vmx/main.c
+index b50873f1a987..95eadd5a715e 100644
+--- a/arch/x86/kvm/vmx/main.c
++++ b/arch/x86/kvm/vmx/main.c
+@@ -1043,6 +1043,7 @@ struct kvm_x86_ops vt_x86_ops __initdata = {
+ 
+ 	.alloc_plane = x86_alloc_plane,
+ 	.free_plane = x86_free_plane,
++	.max_planes = kvm_x86_default_max_planes,
+ };
+ 
+ struct kvm_x86_init_ops vt_init_ops __initdata = {
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index e3f1e0a1d108..b9cade2205b0 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -473,10 +473,16 @@ static u32 msr_based_features[ARRAY_SIZE(msr_based_features_all_except_vmx) +
+ 			      (KVM_LAST_EMULATED_VMX_MSR - KVM_FIRST_EMULATED_VMX_MSR + 1)];
+ static unsigned int num_msr_based_features;
+ 
+-unsigned kvm_arch_max_planes(struct kvm *kvm)
++unsigned kvm_x86_default_max_planes(struct kvm *kvm)
+ {
+ 	return 1;
+ }
++EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_x86_default_max_planes);
++
++unsigned kvm_arch_max_planes(struct kvm *kvm)
++{
++	return kvm_x86_call(max_planes)(kvm);
++}
+ 
+ struct kvm_plane *x86_alloc_plane(void)
+ {
+diff --git a/arch/x86/kvm/x86.h b/arch/x86/kvm/x86.h
+index 3d9fe9ac6430..6af11033decb 100644
+--- a/arch/x86/kvm/x86.h
++++ b/arch/x86/kvm/x86.h
+@@ -705,5 +705,6 @@ static inline bool kvm_is_valid_u_s_cet(struct kvm_vcpu *vcpu, u64 data)
+ 
+ struct kvm_plane *x86_alloc_plane(void);
+ void x86_free_plane(struct kvm_plane *plane);
++unsigned kvm_x86_default_max_planes(struct kvm *kvm);
+ 
+ #endif
+-- 
+2.55.0
+

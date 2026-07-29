@@ -1,0 +1,119 @@
+From 2b9d83dcc5a19052510841e17634ccf90d00732b Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Wed, 4 Mar 2026 15:04:11 +0100
+Subject: [RFC PATCH v1 017/132] kvm: Move VCPU locking to struct
+ kvm_vcpu_common
+
+Fields in struct kvm_vcpu which are protected by these locks is going
+to move to struct kvm_vcpu_common. So move the locks as well.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ include/linux/kvm_host.h | 31 +++++++++++++++++--------------
+ virt/kvm/kvm_main.c      |  3 ++-
+ 2 files changed, 19 insertions(+), 15 deletions(-)
+
+diff --git a/include/linux/kvm_host.h b/include/linux/kvm_host.h
+index 43d8e00812b8..3031eb63b4a9 100644
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -330,6 +330,13 @@ struct kvm_vcpu_common {
+ 	/* Currently active VCPU */
+ 	struct kvm_vcpu *current_vcpu;
+ 
++	/* Locks */
++	int ____srcu_idx; /* Don't use this directly.  You've been warned. */
++#ifdef CONFIG_PROVE_RCU
++	int srcu_depth;
++#endif
++	struct mutex mutex;
++
+ 	/* Scheduling state */
+ #ifdef CONFIG_PREEMPT_NOTIFIERS
+ 	struct preempt_notifier preempt_notifier;
+@@ -347,15 +354,11 @@ struct kvm_vcpu {
+ 	int cpu;
+ 	int vcpu_id; /* id given by userspace at creation */
+ 	int vcpu_idx; /* index into kvm->planes[]->vcpu_array */
+-	int ____srcu_idx; /* Don't use this directly.  You've been warned. */
+-#ifdef CONFIG_PROVE_RCU
+-	int srcu_depth;
+-#endif
++
+ 	int mode;
+ 	u64 requests;
+ 	unsigned long guest_debug;
+ 
+-	struct mutex mutex;
+ 	struct kvm_run *run;
+ 
+ #ifndef __KVM_HAVE_ARCH_WQP
+@@ -1001,35 +1004,35 @@ static inline void kvm_vm_bugged(struct kvm *kvm)
+ 
+ static inline void kvm_vcpu_lock(struct kvm_vcpu *vcpu)
+ {
+-	mutex_lock(&vcpu->mutex);
++	mutex_lock(&vcpu->common->mutex);
+ }
+ 
+ static inline void kvm_vcpu_unlock(struct kvm_vcpu *vcpu)
+ {
+-	mutex_unlock(&vcpu->mutex);
++	mutex_unlock(&vcpu->common->mutex);
+ }
+ 
+ static inline struct mutex *kvm_vcpu_mutex(struct kvm_vcpu *vcpu)
+ {
+-	return &vcpu->mutex;
++	return &vcpu->common->mutex;
+ }
+ 
+ static inline void kvm_vcpu_srcu_read_lock(struct kvm_vcpu *vcpu)
+ {
+ #ifdef CONFIG_PROVE_RCU
+-	WARN_ONCE(vcpu->srcu_depth++,
+-		  "KVM: Illegal vCPU srcu_idx LOCK, depth=%d", vcpu->srcu_depth - 1);
++	WARN_ONCE(vcpu->common->srcu_depth++,
++		  "KVM: Illegal vCPU srcu_idx LOCK, depth=%d", vcpu->common->srcu_depth - 1);
+ #endif
+-	vcpu->____srcu_idx = srcu_read_lock(&vcpu->kvm->srcu);
++	vcpu->common->____srcu_idx = srcu_read_lock(&vcpu->kvm->srcu);
+ }
+ 
+ static inline void kvm_vcpu_srcu_read_unlock(struct kvm_vcpu *vcpu)
+ {
+-	srcu_read_unlock(&vcpu->kvm->srcu, vcpu->____srcu_idx);
++	srcu_read_unlock(&vcpu->kvm->srcu, vcpu->common->____srcu_idx);
+ 
+ #ifdef CONFIG_PROVE_RCU
+-	WARN_ONCE(--vcpu->srcu_depth,
+-		  "KVM: Illegal vCPU srcu_idx UNLOCK, depth=%d", vcpu->srcu_depth);
++	WARN_ONCE(--vcpu->common->srcu_depth,
++		  "KVM: Illegal vCPU srcu_idx UNLOCK, depth=%d", vcpu->common->srcu_depth);
+ #endif
+ }
+ 
+diff --git a/virt/kvm/kvm_main.c b/virt/kvm/kvm_main.c
+index 000a2bbe4521..2049d5731353 100644
+--- a/virt/kvm/kvm_main.c
++++ b/virt/kvm/kvm_main.c
+@@ -466,6 +466,8 @@ static int kvm_vcpu_init_common(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned
+ 
+ 	common->vcpu_idx = atomic_read(&kvm->online_vcpus);
+ 
++	mutex_init(&common->mutex);
++
+ 	common->kvm = kvm;
+ 	common->current_vcpu = vcpu;
+ 
+@@ -502,7 +504,6 @@ static void kvm_vcpu_finish_common(struct kvm_vcpu *vcpu)
+ 
+ static void kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
+ {
+-	mutex_init(&vcpu->mutex);
+ 	vcpu->cpu = -1;
+ 	vcpu->kvm = kvm;
+ 	vcpu->plane = kvm->planes[0];
+-- 
+2.55.0
+

@@ -1,0 +1,91 @@
+From 3b070f9619bdba0a3665674e417bcdac988a18af Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Tue, 28 Apr 2026 14:23:42 +0000
+Subject: [RFC PATCH v1 030/132] kvm: Add KVM_EXIT_PLANE_EVENT
+
+Add a new exit-type to KVM for telling user-space that a plane-vcpu is
+missing. Create a helper which fills out the kvm_run exit structure.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Co-developed-by: Joerg Roedel <joerg.roedel@amd.com>
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ include/linux/kvm_host.h |  2 ++
+ include/uapi/linux/kvm.h | 10 ++++++++++
+ virt/kvm/kvm_main.c      | 12 ++++++++++++
+ 3 files changed, 24 insertions(+)
+
+diff --git a/include/linux/kvm_host.h b/include/linux/kvm_host.h
+index fa2f3f3c4f80..80ec0eff7206 100644
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -1649,6 +1649,8 @@ void kvm_arch_vcpu_blocking(struct kvm_vcpu *vcpu);
+ void kvm_arch_vcpu_unblocking(struct kvm_vcpu *vcpu);
+ bool kvm_vcpu_wake_up(struct kvm_vcpu *vcpu);
+ 
++int kvm_request_create_plane(struct kvm_vcpu *vcpu, unsigned plane, u64 apic_id);
++
+ #ifndef CONFIG_S390
+ void __kvm_vcpu_kick(struct kvm_vcpu *vcpu, bool wait);
+ 
+diff --git a/include/uapi/linux/kvm.h b/include/uapi/linux/kvm.h
+index ac43b829477e..2a9f0a636002 100644
+--- a/include/uapi/linux/kvm.h
++++ b/include/uapi/linux/kvm.h
+@@ -146,6 +146,13 @@ struct kvm_exit_snp_req_certs {
+ 	__u64 ret;
+ };
+ 
++struct kvm_plane_event_exit {
++#define KVM_PLANE_EVENT_CREATE_VCPU	1
++	__u32 cause;
++	__u32 plane;
++	__u64 extra[8];
++};
++
+ #define KVM_S390_GET_SKEYS_NONE   1
+ #define KVM_S390_SKEYS_MAX        1048576
+ 
+@@ -193,6 +200,7 @@ struct kvm_exit_snp_req_certs {
+ #define KVM_EXIT_ARM_SEA          41
+ #define KVM_EXIT_ARM_LDST64B      42
+ #define KVM_EXIT_SNP_REQ_CERTS    43
++#define KVM_EXIT_PLANE_EVENT      44
+ 
+ /* For KVM_EXIT_INTERNAL_ERROR */
+ /* Emulate instruction failed. */
+@@ -497,6 +505,8 @@ struct kvm_run {
+ 		} arm_sea;
+ 		/* KVM_EXIT_SNP_REQ_CERTS */
+ 		struct kvm_exit_snp_req_certs snp_req_certs;
++		/* KVM_EXIT_PLANE_EVENT */
++		struct kvm_plane_event_exit plane_event;
+ 		/* Fix the size of the union. */
+ 		char padding[256];
+ 	};
+diff --git a/virt/kvm/kvm_main.c b/virt/kvm/kvm_main.c
+index 55bbb975455a..886076318bbe 100644
+--- a/virt/kvm/kvm_main.c
++++ b/virt/kvm/kvm_main.c
+@@ -3975,6 +3975,18 @@ bool kvm_vcpu_wake_up(struct kvm_vcpu *vcpu)
+ }
+ EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_vcpu_wake_up);
+ 
++int kvm_request_create_plane(struct kvm_vcpu *vcpu, unsigned plane, u64 apic_id)
++{
++	vcpu->run->exit_reason = KVM_EXIT_PLANE_EVENT;
++	memset(&vcpu->run->plane_event, 0, sizeof(vcpu->run->plane_event));
++	vcpu->run->plane_event.cause = KVM_PLANE_EVENT_CREATE_VCPU;
++	vcpu->run->plane_event.plane = plane;
++	vcpu->run->plane_event.extra[0] = apic_id;
++
++	return 0;
++}
++EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_request_create_plane);
++
+ #ifndef CONFIG_S390
+ /*
+  * Kick a sleeping VCPU, or a guest VCPU in guest mode, into host kernel mode.
+-- 
+2.55.0
+

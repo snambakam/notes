@@ -1,0 +1,96 @@
+From 33691c7f4fa99f25eb0098f9576fa61fb1beb956 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Tue, 5 May 2026 13:45:34 +0000
+Subject: [RFC PATCH v1 01/18] Update Linux Header for KVM Planes
+ Support
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+(cherry picked from commit eb860f17ae3586b947996a98fb80c02e3294bcea)
+---
+ include/standard-headers/linux/typelimits.h |  6 +++---
+ linux-headers/linux/kvm.h                   | 18 ++++++++++++++++++
+ 2 files changed, 21 insertions(+), 3 deletions(-)
+
+diff --git a/include/standard-headers/linux/typelimits.h b/include/standard-headers/linux/typelimits.h
+index 1304520082..8166c639b5 100644
+--- a/include/standard-headers/linux/typelimits.h
++++ b/include/standard-headers/linux/typelimits.h
+@@ -1,8 +1,8 @@
+ /* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
+-#ifndef _LINUX_TYPELIMITS_H
+-#define _LINUX_TYPELIMITS_H
++#ifndef _UAPI_LINUX_TYPELIMITS_H
++#define _UAPI_LINUX_TYPELIMITS_H
+ 
+ #define __KERNEL_INT_MAX ((int)(~0U >> 1))
+ #define __KERNEL_INT_MIN (-__KERNEL_INT_MAX - 1)
+ 
+-#endif /* _LINUX_TYPELIMITS_H */
++#endif /* _UAPI_LINUX_TYPELIMITS_H */
+diff --git a/linux-headers/linux/kvm.h b/linux-headers/linux/kvm.h
+index dd52e2a65b..8caa3eccce 100644
+--- a/linux-headers/linux/kvm.h
++++ b/linux-headers/linux/kvm.h
+@@ -143,6 +143,13 @@ struct kvm_exit_snp_req_certs {
+ 	__u64 ret;
+ };
+ 
++struct kvm_plane_event_exit {
++#define KVM_PLANE_EVENT_CREATE_VCPU	1
++	__u32 cause;
++	__u32 plane;
++	__u64 extra[8];
++};
++
+ #define KVM_S390_GET_SKEYS_NONE   1
+ #define KVM_S390_SKEYS_MAX        1048576
+ 
+@@ -190,6 +197,7 @@ struct kvm_exit_snp_req_certs {
+ #define KVM_EXIT_ARM_SEA          41
+ #define KVM_EXIT_ARM_LDST64B      42
+ #define KVM_EXIT_SNP_REQ_CERTS    43
++#define KVM_EXIT_PLANE_EVENT      44
+ 
+ /* For KVM_EXIT_INTERNAL_ERROR */
+ /* Emulate instruction failed. */
+@@ -486,6 +494,8 @@ struct kvm_run {
+ 		} arm_sea;
+ 		/* KVM_EXIT_SNP_REQ_CERTS */
+ 		struct kvm_exit_snp_req_certs snp_req_certs;
++		/* KVM_EXIT_PLANE_EVENT */
++		struct kvm_plane_event_exit plane_event;
+ 		/* Fix the size of the union. */
+ 		char padding[256];
+ 	};
+@@ -719,6 +729,11 @@ struct kvm_enable_cap {
+ #define KVM_GET_EMULATED_CPUID	  _IOWR(KVMIO, 0x09, struct kvm_cpuid2)
+ #define KVM_GET_MSR_FEATURE_INDEX_LIST    _IOWR(KVMIO, 0x0a, struct kvm_msr_list)
+ 
++/*
++ * Maximum number of supported planes
++ */
++#define KVM_MAX_PLANES	16
++
+ /*
+  * Extension capability list.
+  */
+@@ -986,6 +1001,7 @@ struct kvm_enable_cap {
+ #define KVM_CAP_S390_KEYOP 247
+ #define KVM_CAP_S390_VSIE_ESAMODE 248
+ #define KVM_CAP_S390_HPAGE_2G 249
++#define KVM_CAP_PLANES 250
+ 
+ struct kvm_irq_routing_irqchip {
+ 	__u32 irqchip;
+@@ -1339,6 +1355,8 @@ struct kvm_s390_keyop {
+ #define KVM_GET_DEVICE_ATTR	  _IOW(KVMIO,  0xe2, struct kvm_device_attr)
+ #define KVM_HAS_DEVICE_ATTR	  _IOW(KVMIO,  0xe3, struct kvm_device_attr)
+ 
++#define KVM_CREATE_PLANE	  _IO(KVMIO, 0xe4)
++
+ /*
+  * ioctls for vcpu fds
+  */
+-- 
+2.55.0
+

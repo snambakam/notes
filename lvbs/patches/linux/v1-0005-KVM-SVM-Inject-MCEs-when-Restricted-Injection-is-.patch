@@ -1,0 +1,248 @@
+From 40c05f68b28bd7545d9a619502da1ff7e7582112 Mon Sep 17 00:00:00 2001
+From: Melody Wang <huibo.wang@amd.com>
+Date: Fri, 24 Apr 2026 17:42:09 +0000
+Subject: [RFC PATCH v1 005/132] KVM: SVM: Inject MCEs when
+ Restricted Injection is active
+
+When Restricted Injection is active, only #HV exceptions can be injected
+into the SEV-SNP guest.
+
+Detect that, and then follow the #HV doorbell communication from the
+GHCB specification to inject the MCEs.
+
+Co-developed-by: Thomas Lendacky <thomas.lendacky@amd.com>
+Signed-off-by: Thomas Lendacky <thomas.lendacky@amd.com>
+Signed-off-by: Melody Wang <huibo.wang@amd.com>
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/x86/include/asm/kvm-x86-ops.h |  1 +
+ arch/x86/include/asm/kvm_host.h    |  1 +
+ arch/x86/kvm/svm/sev.c             | 16 ++++++++++++++--
+ arch/x86/kvm/svm/svm.c             | 17 +++++++++++++++++
+ arch/x86/kvm/svm/svm.h             |  2 ++
+ arch/x86/kvm/vmx/main.c            | 10 ++++++++++
+ arch/x86/kvm/vmx/vmx.c             |  5 +++++
+ arch/x86/kvm/vmx/x86_ops.h         |  1 +
+ arch/x86/kvm/x86.c                 |  7 +++++++
+ 9 files changed, 58 insertions(+), 2 deletions(-)
+
+diff --git a/arch/x86/include/asm/kvm-x86-ops.h b/arch/x86/include/asm/kvm-x86-ops.h
+index 83dc5086138b..f1d597d1afb4 100644
+--- a/arch/x86/include/asm/kvm-x86-ops.h
++++ b/arch/x86/include/asm/kvm-x86-ops.h
+@@ -79,6 +79,7 @@ KVM_X86_OP(inject_exception)
+ KVM_X86_OP(cancel_injection)
+ KVM_X86_OP(interrupt_allowed)
+ KVM_X86_OP(nmi_allowed)
++KVM_X86_OP_OPTIONAL(mce_allowed)
+ KVM_X86_OP(get_nmi_mask)
+ KVM_X86_OP(set_nmi_mask)
+ KVM_X86_OP(enable_nmi_window)
+diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
+index 5f6c1ce9673b..f09cd4de8355 100644
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -1883,6 +1883,7 @@ struct kvm_x86_ops {
+ 	void (*cancel_injection)(struct kvm_vcpu *vcpu);
+ 	int (*interrupt_allowed)(struct kvm_vcpu *vcpu, bool for_injection);
+ 	int (*nmi_allowed)(struct kvm_vcpu *vcpu, bool for_injection);
++	int (*mce_allowed)(struct kvm_vcpu *vcpu);
+ 	bool (*get_nmi_mask)(struct kvm_vcpu *vcpu);
+ 	void (*set_nmi_mask)(struct kvm_vcpu *vcpu, bool masked);
+ 	/* Whether or not a virtual NMI is pending in hardware. */
+diff --git a/arch/x86/kvm/svm/sev.c b/arch/x86/kvm/svm/sev.c
+index 0af3f9f07dd9..4ea015af5ff1 100644
+--- a/arch/x86/kvm/svm/sev.c
++++ b/arch/x86/kvm/svm/sev.c
+@@ -5405,6 +5405,8 @@ static void __sev_snp_inject(enum inject_type type, struct kvm_vcpu *vcpu)
+ 
+ 	if (type == INJECT_NMI)
+ 		hvdb->events.nmi = 1;
++	else if (type == INJECT_MCE)
++		hvdb->events.mce = 1;
+ 	else
+ 		hvdb->events.vector = vcpu->arch.interrupt.nr;
+ 
+@@ -5420,6 +5422,11 @@ bool sev_snp_queue_exception(struct kvm_vcpu *vcpu)
+ 	if (!sev_snp_is_rinj_active(vcpu))
+ 		return false;
+ 
++	if (vcpu->arch.exception.vector == MC_VECTOR) {
++		__sev_snp_inject(INJECT_MCE, vcpu);
++		return true;
++	}
++
+ 	/*
+ 	 * Restricted Injection is enabled, only #HV is supported.
+ 	 * If the vector is not HV_VECTOR, do not inject the exception,
+@@ -5488,7 +5495,7 @@ void sev_snp_cancel_injection(struct kvm_vcpu *vcpu)
+ 
+ 	/*
+ 	 * KVM only injects a single event each time (prepare_hv_injection),
+-	 * so when events.nmi is true, the vector will be zero
++	 * so when events.nmi is true, the MCE and vector will be zero.
+ 	 */
+ 	if (hvdb->events.vector)
+ 		svm->vmcb->control.event_inj |= hvdb->events.vector |
+@@ -5497,6 +5504,9 @@ void sev_snp_cancel_injection(struct kvm_vcpu *vcpu)
+ 	if (hvdb->events.nmi)
+ 		svm->vmcb->control.event_inj |= SVM_EVTINJ_TYPE_NMI;
+ 
++	if (hvdb->events.mce)
++		svm->vmcb->control.event_inj |= MC_VECTOR | SVM_EVTINJ_TYPE_EXEPT;
++
+ 	hvdb->events.pending_events = 0;
+ 
+ out:
+@@ -5522,9 +5532,11 @@ bool sev_snp_blocked(enum inject_type type, struct kvm_vcpu *vcpu)
+ 	if (!hvdb)
+ 		return true;
+ 
+-	/* Indicate NMIs and interrupts blocked based on guest acknowledgment */
++	/* Indicate NMIs, MCEs and interrupts blocked based on guest acknowledgment */
+ 	if (type == INJECT_NMI)
+ 		blocked = hvdb->events.nmi;
++	else if (type == INJECT_MCE)
++		blocked = hvdb->events.mce;
+ 	else
+ 		blocked = !!hvdb->events.vector;
+ 
+diff --git a/arch/x86/kvm/svm/svm.c b/arch/x86/kvm/svm/svm.c
+index edc0c9ee4e4b..94c366ab059f 100644
+--- a/arch/x86/kvm/svm/svm.c
++++ b/arch/x86/kvm/svm/svm.c
+@@ -4095,6 +4095,22 @@ static int svm_interrupt_allowed(struct kvm_vcpu *vcpu, bool for_injection)
+ 	return 1;
+ }
+ 
++bool svm_mce_blocked(struct kvm_vcpu *vcpu)
++{
++	if (sev_snp_is_rinj_active(vcpu))
++		return sev_snp_blocked(INJECT_MCE, vcpu);
++
++	return false;
++}
++
++static int svm_mce_allowed(struct kvm_vcpu *vcpu)
++{
++	if (svm_mce_blocked(vcpu))
++		return 0;
++
++	return 1;
++}
++
+ static void svm_enable_irq_window(struct kvm_vcpu *vcpu)
+ {
+ 	struct vcpu_svm *svm = to_svm(vcpu);
+@@ -5422,6 +5438,7 @@ struct kvm_x86_ops svm_x86_ops __initdata = {
+ 	.cancel_injection = svm_cancel_injection,
+ 	.interrupt_allowed = svm_interrupt_allowed,
+ 	.nmi_allowed = svm_nmi_allowed,
++	.mce_allowed = svm_mce_allowed,
+ 	.get_nmi_mask = svm_get_nmi_mask,
+ 	.set_nmi_mask = svm_set_nmi_mask,
+ 	.enable_nmi_window = svm_enable_nmi_window,
+diff --git a/arch/x86/kvm/svm/svm.h b/arch/x86/kvm/svm/svm.h
+index 94f612eeacfa..d4ddc3424a51 100644
+--- a/arch/x86/kvm/svm/svm.h
++++ b/arch/x86/kvm/svm/svm.h
+@@ -61,6 +61,7 @@ extern struct kvm_x86_ops svm_x86_ops __initdata;
+ enum inject_type {
+ 	INJECT_IRQ,
+ 	INJECT_NMI,
++	INJECT_MCE,
+ };
+ 
+ /*
+@@ -821,6 +822,7 @@ void svm_set_cr4(struct kvm_vcpu *vcpu, unsigned long cr4);
+ void disable_nmi_singlestep(struct vcpu_svm *svm);
+ bool svm_smi_blocked(struct kvm_vcpu *vcpu);
+ bool svm_nmi_blocked(struct kvm_vcpu *vcpu);
++bool svm_mce_blocked(struct kvm_vcpu *vcpu);
+ bool svm_interrupt_blocked(struct kvm_vcpu *vcpu);
+ void svm_set_gif(struct vcpu_svm *svm, bool value);
+ int svm_invoke_exit_handler(struct kvm_vcpu *vcpu, u64 exit_code);
+diff --git a/arch/x86/kvm/vmx/main.c b/arch/x86/kvm/vmx/main.c
+index 83d9921277ea..b07ff5435ca5 100644
+--- a/arch/x86/kvm/vmx/main.c
++++ b/arch/x86/kvm/vmx/main.c
+@@ -820,6 +820,15 @@ static void vt_cancel_hv_timer(struct kvm_vcpu *vcpu)
+ }
+ #endif
+ 
++static int vt_mce_allowed(struct kvm_vcpu *vcpu)
++{
++	if (is_td_vcpu(vcpu))
++		return 0;
++
++	return vmx_mce_allowed(vcpu);
++}
++
++
+ static void vt_setup_mce(struct kvm_vcpu *vcpu)
+ {
+ 	if (is_td_vcpu(vcpu))
+@@ -953,6 +962,7 @@ struct kvm_x86_ops vt_x86_ops __initdata = {
+ 	.cancel_injection = vt_op(cancel_injection),
+ 	.interrupt_allowed = vt_op(interrupt_allowed),
+ 	.nmi_allowed = vt_op(nmi_allowed),
++	.mce_allowed = vt_op(mce_allowed),
+ 	.get_nmi_mask = vt_op(get_nmi_mask),
+ 	.set_nmi_mask = vt_op(set_nmi_mask),
+ 	.enable_nmi_window = vt_op(enable_nmi_window),
+diff --git a/arch/x86/kvm/vmx/vmx.c b/arch/x86/kvm/vmx/vmx.c
+index cc75feec05da..d1ece6ef6f63 100644
+--- a/arch/x86/kvm/vmx/vmx.c
++++ b/arch/x86/kvm/vmx/vmx.c
+@@ -5251,6 +5251,11 @@ int vmx_interrupt_allowed(struct kvm_vcpu *vcpu, bool for_injection)
+ 	return !vmx_interrupt_blocked(vcpu);
+ }
+ 
++int vmx_mce_allowed(struct kvm_vcpu *vcpu)
++{
++	return 1;
++}
++
+ int vmx_set_tss_addr(struct kvm *kvm, unsigned int addr)
+ {
+ 	void __user *ret;
+diff --git a/arch/x86/kvm/vmx/x86_ops.h b/arch/x86/kvm/vmx/x86_ops.h
+index 409858074246..5679bb6af260 100644
+--- a/arch/x86/kvm/vmx/x86_ops.h
++++ b/arch/x86/kvm/vmx/x86_ops.h
+@@ -93,6 +93,7 @@ void vmx_inject_exception(struct kvm_vcpu *vcpu);
+ void vmx_cancel_injection(struct kvm_vcpu *vcpu);
+ int vmx_interrupt_allowed(struct kvm_vcpu *vcpu, bool for_injection);
+ int vmx_nmi_allowed(struct kvm_vcpu *vcpu, bool for_injection);
++int vmx_mce_allowed(struct kvm_vcpu *vcpu);
+ bool vmx_get_nmi_mask(struct kvm_vcpu *vcpu);
+ void vmx_set_nmi_mask(struct kvm_vcpu *vcpu, bool masked);
+ void vmx_enable_nmi_window(struct kvm_vcpu *vcpu);
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index afcac1042947..094203113fa3 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -10734,6 +10734,12 @@ static int kvm_check_and_inject_events(struct kvm_vcpu *vcpu,
+ 			kvm_update_dr7(vcpu);
+ 		}
+ 
++		if (vcpu->arch.exception.vector == MC_VECTOR) {
++			r = static_call(kvm_x86_mce_allowed)(vcpu);
++			if (!r)
++				goto out_except;
++		}
++
+ 		kvm_inject_exception(vcpu);
+ 
+ 		vcpu->arch.exception.pending = false;
+@@ -10741,6 +10747,7 @@ static int kvm_check_and_inject_events(struct kvm_vcpu *vcpu,
+ 
+ 		can_inject = false;
+ 	}
++out_except:
+ 
+ 	/* Don't inject interrupts if the user asked to avoid doing so */
+ 	if (vcpu->guest_debug & KVM_GUESTDBG_BLOCKIRQ)
+-- 
+2.55.0
+

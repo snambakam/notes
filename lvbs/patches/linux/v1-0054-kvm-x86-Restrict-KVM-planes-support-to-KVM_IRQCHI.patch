@@ -1,0 +1,87 @@
+From 42b8ed9bd5540da0dfacf5cdf79c5b79053377ab Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Mon, 1 Jun 2026 12:59:12 +0000
+Subject: [RFC PATCH v1 054/132] kvm: x86: Restrict KVM planes
+ support to KVM_IRQCHIP_SPLIT
+
+The code right now only supports plane-aware IOAPIC IRQ routing for
+IRQ-chip in split mode. Enforce that restriction in the KVM x86 code.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/x86/kvm/x86.c       | 8 ++++++--
+ include/linux/kvm_host.h | 1 +
+ virt/kvm/kvm_main.c      | 5 +++++
+ 3 files changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index b9cade2205b0..4dd47ca43420 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -481,6 +481,10 @@ EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_x86_default_max_planes);
+ 
+ unsigned kvm_arch_max_planes(struct kvm *kvm)
+ {
++	/* For now, planes are only supported with irqchip=split */
++	if (!irqchip_split(kvm))
++		return 1;
++
+ 	return kvm_x86_call(max_planes)(kvm);
+ }
+ 
+@@ -6781,7 +6785,7 @@ int kvm_vm_ioctl_enable_cap(struct kvm *kvm,
+ 		if (cap->args[0] > KVM_MAX_IRQ_ROUTES)
+ 			goto split_irqchip_unlock;
+ 		r = -EEXIST;
+-		if (irqchip_in_kernel(kvm))
++		if (irqchip_in_kernel(kvm) || kvm->has_planes)
+ 			goto split_irqchip_unlock;
+ 		if (kvm->created_vcpus)
+ 			goto split_irqchip_unlock;
+@@ -7350,7 +7354,7 @@ int kvm_arch_vm_ioctl(struct file *filp, unsigned int ioctl, unsigned long arg)
+ 			goto create_irqchip_unlock;
+ 
+ 		r = -EINVAL;
+-		if (kvm->created_vcpus)
++		if (kvm->created_vcpus || kvm->has_planes)
+ 			goto create_irqchip_unlock;
+ 
+ 		r = kvm_pic_init(kvm);
+diff --git a/include/linux/kvm_host.h b/include/linux/kvm_host.h
+index 4297fa7294c8..337813ccad0d 100644
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -918,6 +918,7 @@ struct kvm {
+ 	struct list_head gpc_list;
+ 
+ 	struct kvm_plane *planes[KVM_MAX_PLANES];
++	bool has_planes;
+ 
+ 	/*
+ 	 * created_vcpus is protected by kvm->lock, and is incremented
+diff --git a/virt/kvm/kvm_main.c b/virt/kvm/kvm_main.c
+index 2eddfb9a6446..a83b817d4e18 100644
+--- a/virt/kvm/kvm_main.c
++++ b/virt/kvm/kvm_main.c
+@@ -5506,6 +5506,10 @@ static int kvm_vm_ioctl_create_plane(struct kvm *kvm, unsigned id)
+ 	    WARN_ON_ONCE(id >= KVM_MAX_PLANES))
+ 		return -EINVAL;
+ 
++	/* Planes are only supported with in-kernel IRQ-chip */
++	if (!kvm_arch_irqchip_in_kernel(kvm))
++		return -EINVAL;
++
+ 	guard(mutex)(&kvm->lock);
+ 	if (kvm->planes[id])
+ 		return -EEXIST;
+@@ -5528,6 +5532,7 @@ static int kvm_vm_ioctl_create_plane(struct kvm *kvm, unsigned id)
+ 	}
+ 
+ 	kvm->planes[id] = plane;
++	kvm->has_planes = true;
+ 	fd_install(fd, file);
+ 	return fd;
+ 
+-- 
+2.55.0
+

@@ -1,0 +1,41 @@
+From 44da6546bac218885905b4e010945590d6d0005b Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Sun, 23 Mar 2025 21:47:10 +0100
+Subject: [RFC PATCH v1 073/132] KVM: x86: add infrastructure to
+ share FPU across planes
+
+Wrap fpu_alloc_guest_fpstate() and fpu_free_guest_fpstate() so that only
+one FPU exists for vCPUs that are in different planes but share the same
+vCPU id.
+
+This API could be handy for VTL implementation but it may be tricky
+because for some registers sharing would be a bad idea (even MPX right
+now if it weren't deprecated, but APX in the future could be worse).
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+---
+ arch/x86/include/asm/kvm_host.h | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
+index faa7a9049315..e882fa8921a2 100644
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -1468,6 +1468,7 @@ struct kvm_arch {
+ 	unsigned int indirect_shadow_pages;
+ 	u8 mmu_valid_gen;
+ 	u8 vm_type;
++	bool planes_share_fpu;
+ 	bool has_private_mem;
+ 	bool has_protected_state;
+ 	bool has_protected_eoi;
+@@ -2594,4 +2595,6 @@ static inline bool kvm_arch_has_irq_bypass(void)
+ 	return enable_device_posted_irqs;
+ }
+ 
++bool kvm_arch_planes_share_fpu(struct kvm *kvm);
++
+ #endif /* _ASM_X86_KVM_HOST_H */
+-- 
+2.55.0
+

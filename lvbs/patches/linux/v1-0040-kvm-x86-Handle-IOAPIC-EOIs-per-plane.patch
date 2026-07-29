@@ -1,0 +1,66 @@
+From 518f47ad5e7a2ef5a5bd0afa0fcc6cf34ed4396e Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Fri, 29 May 2026 08:38:36 +0000
+Subject: [RFC PATCH v1 040/132] kvm: x86: Handle IOAPIC EOIs per
+ plane
+
+Make sure the handling of IOAPIC EOIs is aware of planes.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/x86/include/asm/kvm_host.h |  2 +-
+ arch/x86/kvm/irq.c              |  3 ++-
+ arch/x86/kvm/x86.c              | 10 ++++++++--
+ 3 files changed, 11 insertions(+), 4 deletions(-)
+
+diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
+index 19fa9ac62d66..17c07a7cb57c 100644
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -109,7 +109,7 @@
+ #define KVM_REQ_APIC_PAGE_RELOAD \
+ 	KVM_ARCH_REQ_FLAGS(17, KVM_REQUEST_WAIT | KVM_REQUEST_NO_WAKEUP)
+ #define KVM_REQ_HV_CRASH		KVM_ARCH_REQ(18)
+-#define KVM_REQ_IOAPIC_EOI_EXIT		KVM_ARCH_REQ(19)
++#define KVM_REQ_IOAPIC_EOI_EXIT		KVM_ARCH_PLANE_REQ(19)
+ #define KVM_REQ_HV_RESET		KVM_ARCH_REQ(20)
+ #define KVM_REQ_HV_EXIT			KVM_ARCH_REQ(21)
+ #define KVM_REQ_HV_STIMER		KVM_ARCH_REQ(22)
+diff --git a/arch/x86/kvm/irq.c b/arch/x86/kvm/irq.c
+index ee08f086f5ef..45b1a84cf468 100644
+--- a/arch/x86/kvm/irq.c
++++ b/arch/x86/kvm/irq.c
+@@ -400,7 +400,8 @@ void kvm_scan_ioapic_routes(struct kvm_vcpu *vcpu,
+ 		hlist_for_each_entry(entry, &table->map[i], link) {
+ 			struct kvm_lapic_irq irq;
+ 
+-			if (entry->type != KVM_IRQ_ROUTING_MSI)
++			if (entry->type != KVM_IRQ_ROUTING_MSI ||
++			    entry->msi.plane_level != vcpu->plane_level)
+ 				continue;
+ 
+ 			kvm_msi_to_lapic_irq(vcpu->kvm, entry, &irq);
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index 46e35ae0c62f..16dc50944f23 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -11247,8 +11247,14 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
+ 				goto out;
+ 			}
+ 		}
+-		if (kvm_check_request(KVM_REQ_SCAN_IOAPIC, vcpu))
+-			vcpu_scan_ioapic(vcpu);
++		if (kvm_check_request(KVM_REQ_SCAN_IOAPIC, vcpu)) {
++			struct kvm_vcpu *v;
++			unsigned i;
++
++			vcpu_for_each_plane(vcpu->common, i, v) {
++				vcpu_scan_ioapic(v);
++			}
++		}
+ 		if (kvm_check_request(KVM_REQ_LOAD_EOI_EXITMAP, vcpu))
+ 			vcpu_load_eoi_exitmap(vcpu);
+ 		if (kvm_check_request(KVM_REQ_APIC_PAGE_RELOAD, vcpu))
+-- 
+2.55.0
+

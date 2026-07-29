@@ -1,0 +1,145 @@
+From 0c228edaea8611d89b17b3ace5cf458aa711b268 Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Sun, 23 Mar 2025 19:41:43 +0100
+Subject: [RFC PATCH v1 064/132] KVM: move mem_attr_array to
+ kvm_plane
+
+Another aspect of the VM that is now different for separate planes is
+memory attributes, in order to support RWX permissions in the future.
+The existing vm-level ioctls apply to plane 0 and the underlying
+functionality operates on struct kvm_plane, which now hosts the
+mem_attr_array xarray.
+
+As a result, the pre/post architecture-specific callbacks also take
+a plane.
+
+Private/shared is a global attribute and only applies to plane 0.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+---
+ arch/x86/kvm/mmu/mmu.c | 25 ++++++++++++++-----------
+ virt/kvm/guest_memfd.c |  3 ++-
+ 2 files changed, 16 insertions(+), 12 deletions(-)
+
+diff --git a/arch/x86/kvm/mmu/mmu.c b/arch/x86/kvm/mmu/mmu.c
+index 9fce05dc6adf..329ab1a4de26 100644
+--- a/arch/x86/kvm/mmu/mmu.c
++++ b/arch/x86/kvm/mmu/mmu.c
+@@ -8022,12 +8022,14 @@ static void hugepage_set_mixed(struct kvm_memory_slot *slot, gfn_t gfn,
+ 	lpage_info_slot(gfn, slot, level)->disallow_lpage |= KVM_LPAGE_MIXED_FLAG;
+ }
+ 
+-bool kvm_arch_pre_set_memory_attributes(struct kvm *kvm,
++bool kvm_arch_pre_set_memory_attributes(struct kvm_plane *plane,
+ 					struct kvm_gfn_range *range)
+ {
+ 	struct kvm_memory_slot *slot = range->slot;
+ 	int level;
+ 
++	struct kvm *kvm = plane->kvm;
++
+ 	/*
+ 	 * Zap SPTEs even if the slot can't be mapped PRIVATE.  KVM x86 only
+ 	 * supports KVM_MEMORY_ATTRIBUTE_PRIVATE, and so it *seems* like KVM
+@@ -8083,28 +8085,27 @@ bool kvm_arch_pre_set_memory_attributes(struct kvm *kvm,
+ 	return kvm_unmap_gfn_range(kvm, range);
+ }
+ 
+-
+-
+-static bool hugepage_has_attrs(struct kvm *kvm, struct kvm_memory_slot *slot,
++static bool hugepage_has_attrs(struct kvm_plane *plane, struct kvm_memory_slot *slot,
+ 			       gfn_t gfn, int level, unsigned long attrs)
+ {
+ 	const unsigned long start = gfn;
+ 	const unsigned long end = start + KVM_PAGES_PER_HPAGE(level);
+ 
+ 	if (level == PG_LEVEL_2M)
+-		return kvm_range_has_memory_attributes(kvm, start, end, ~0, attrs);
++		return kvm_range_has_memory_attributes(plane, start, end, ~0, attrs);
+ 
+ 	for (gfn = start; gfn < end; gfn += KVM_PAGES_PER_HPAGE(level - 1)) {
+ 		if (hugepage_test_mixed(slot, gfn, level - 1) ||
+-		    attrs != kvm_get_memory_attributes(kvm, gfn))
++		    attrs != kvm_get_plane_memory_attributes(plane, gfn))
+ 			return false;
+ 	}
+ 	return true;
+ }
+ 
+-bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
++bool kvm_arch_post_set_memory_attributes(struct kvm_plane *plane,
+ 					 struct kvm_gfn_range *range)
+ {
++	struct kvm *kvm = plane->kvm;
+ 	unsigned long attrs = range->arg.attributes;
+ 	struct kvm_memory_slot *slot = range->slot;
+ 	int level;
+@@ -8138,7 +8139,7 @@ bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
+ 			 */
+ 			if (gfn >= slot->base_gfn &&
+ 			    gfn + nr_pages <= slot->base_gfn + slot->npages) {
+-				if (hugepage_has_attrs(kvm, slot, gfn, level, attrs))
++				if (hugepage_has_attrs(plane, slot, gfn, level, attrs))
+ 					hugepage_clear_mixed(slot, gfn, level);
+ 				else
+ 					hugepage_set_mixed(slot, gfn, level);
+@@ -8160,7 +8161,7 @@ bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
+ 		 */
+ 		if (gfn < range->end &&
+ 		    (gfn + nr_pages) <= (slot->base_gfn + slot->npages)) {
+-			if (hugepage_has_attrs(kvm, slot, gfn, level, attrs))
++			if (hugepage_has_attrs(plane, slot, gfn, level, attrs))
+ 				hugepage_clear_mixed(slot, gfn, level);
+ 			else
+ 				hugepage_set_mixed(slot, gfn, level);
+@@ -8172,11 +8173,13 @@ bool kvm_arch_post_set_memory_attributes(struct kvm *kvm,
+ void kvm_mmu_init_memslot_memory_attributes(struct kvm *kvm,
+ 					    struct kvm_memory_slot *slot)
+ {
++	struct kvm_plane *plane0;
+ 	int level;
+ 
+ 	if (!kvm_arch_has_private_mem(kvm))
+ 		return;
+ 
++	plane0 = kvm->planes[0];
+ 	for (level = PG_LEVEL_2M; level <= KVM_MAX_HUGEPAGE_LEVEL; level++) {
+ 		/*
+ 		 * Don't bother tracking mixed attributes for pages that can't
+@@ -8196,9 +8199,9 @@ void kvm_mmu_init_memslot_memory_attributes(struct kvm *kvm,
+ 		 * be manually checked as the attributes may already be mixed.
+ 		 */
+ 		for (gfn = start; gfn < end; gfn += nr_pages) {
+-			unsigned long attrs = kvm_get_memory_attributes(kvm, gfn);
++			unsigned long attrs = kvm_get_plane_memory_attributes(plane0, gfn);
+ 
+-			if (hugepage_has_attrs(kvm, slot, gfn, level, attrs))
++			if (hugepage_has_attrs(plane0, slot, gfn, level, attrs))
+ 				hugepage_clear_mixed(slot, gfn, level);
+ 			else
+ 				hugepage_set_mixed(slot, gfn, level);
+diff --git a/virt/kvm/guest_memfd.c b/virt/kvm/guest_memfd.c
+index db57c5766ab6..229154e06cd0 100644
+--- a/virt/kvm/guest_memfd.c
++++ b/virt/kvm/guest_memfd.c
+@@ -827,6 +827,7 @@ static long __kvm_gmem_populate(struct kvm *kvm, struct kvm_memory_slot *slot,
+ 				struct file *file, gfn_t gfn, struct page *src_page,
+ 				kvm_gmem_populate_cb post_populate, void *opaque)
+ {
++	struct kvm_plane *plane0 = kvm->planes[0];
+ 	pgoff_t index = kvm_gmem_get_index(slot, gfn);
+ 	struct folio *folio;
+ 	kvm_pfn_t pfn;
+@@ -842,7 +843,7 @@ static long __kvm_gmem_populate(struct kvm *kvm, struct kvm_memory_slot *slot,
+ 
+ 	folio_unlock(folio);
+ 
+-	if (!kvm_range_has_memory_attributes(kvm, gfn, gfn + 1,
++	if (!kvm_range_has_memory_attributes(plane0, gfn, gfn + 1,
+ 					     KVM_MEMORY_ATTRIBUTE_PRIVATE,
+ 					     KVM_MEMORY_ATTRIBUTE_PRIVATE)) {
+ 		ret = -EINVAL;
+-- 
+2.55.0
+

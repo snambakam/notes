@@ -1,0 +1,114 @@
+From 195b3cf2d310631c368868222dfa422647bda8f1 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Thu, 21 May 2026 10:22:55 +0000
+Subject: [RFC PATCH v1 051/132] kvm: x86: Share pio_data across
+ planes
+
+The vcpu->arch.pio_data pointer is memory mapped to user-space
+alongside the kvm_run page. So it also needs to be common across all
+planes for a given VCPU index.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/x86/include/asm/kvm_host.h |  2 ++
+ arch/x86/kvm/x86.c              | 20 +++++++++++---------
+ virt/kvm/kvm_main.c             |  2 +-
+ 3 files changed, 14 insertions(+), 10 deletions(-)
+
+diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
+index e17afcc54dbb..28848a0b84ef 100644
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -821,6 +821,8 @@ struct kvm_vcpu_arch_common {
+ 	bool cpuid_dynamic_bits_dirty;
+ 	bool is_amd_compatible;
+ 
++	void *pio_data;
++
+ 	/*
+ 	 * cpu_caps holds the effective guest capabilities, i.e. the features
+ 	 * the vCPU is allowed to use.  Typically, but not always, features can
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index c146c8c17cb7..e76d33636ace 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -8469,7 +8469,7 @@ static int emulator_pio_in_out(struct kvm_vcpu *vcpu, int size,
+ }
+ 
+ static int emulator_pio_in(struct kvm_vcpu *vcpu, int size,
+-      			   unsigned short port, void *val, unsigned int count)
++			   unsigned short port, void *val, unsigned int count)
+ {
+ 	int r = emulator_pio_in_out(vcpu, size, port, val, count, true);
+ 	if (r)
+@@ -12842,7 +12842,6 @@ int kvm_arch_vcpu_precreate(struct kvm *kvm, unsigned int id)
+ 
+ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
+ {
+-	struct page *page;
+ 	int r;
+ 
+ 	vcpu->arch.last_vmentry_cpu = -1;
+@@ -12866,10 +12865,7 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
+ 
+ 	r = -ENOMEM;
+ 
+-	page = alloc_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO);
+-	if (!page)
+-		goto fail_free_lapic;
+-	vcpu->arch.pio_data = page_address(page);
++	vcpu->arch.pio_data = vcpu->common->arch.pio_data;
+ 
+ 	vcpu->arch.mce_banks = kcalloc(KVM_MAX_MCE_BANKS * 4, sizeof(u64),
+ 				       GFP_KERNEL_ACCOUNT);
+@@ -12929,8 +12925,6 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
+ fail_free_mce_banks:
+ 	kfree(vcpu->arch.mce_banks);
+ 	kfree(vcpu->arch.mci_ctl2_banks);
+-	free_page((unsigned long)vcpu->arch.pio_data);
+-fail_free_lapic:
+ 	kvm_free_lapic(vcpu);
+ fail_mmu_destroy:
+ 	kvm_mmu_destroy(vcpu);
+@@ -12978,16 +12972,24 @@ void kvm_arch_vcpu_destroy(struct kvm_vcpu *vcpu)
+ 	idx = srcu_read_lock(&vcpu->kvm->srcu);
+ 	kvm_mmu_destroy(vcpu);
+ 	srcu_read_unlock(&vcpu->kvm->srcu, idx);
+-	free_page((unsigned long)vcpu->arch.pio_data);
+ }
+ 
+ int kvm_arch_vcpu_common_init(struct kvm_vcpu_common *common)
+ {
++	struct page *page;
++
++	page = alloc_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO);
++	if (!page)
++		return -ENOMEM;
++
++	common->arch.pio_data = page_address(page);
++
+ 	return 0;
+ }
+ 
+ void kvm_arch_vcpu_common_destroy(struct kvm_vcpu_common *common)
+ {
++	free_page((unsigned long)common->arch.pio_data);
+ 	kvfree(common->arch.cpuid_entries);
+ }
+ 
+diff --git a/virt/kvm/kvm_main.c b/virt/kvm/kvm_main.c
+index cc2e2e189f79..2eddfb9a6446 100644
+--- a/virt/kvm/kvm_main.c
++++ b/virt/kvm/kvm_main.c
+@@ -4252,7 +4252,7 @@ static vm_fault_t kvm_vcpu_fault(struct vm_fault *vmf)
+ 		page = virt_to_page(vcpu->run);
+ #ifdef CONFIG_X86
+ 	else if (vmf->pgoff == KVM_PIO_PAGE_OFFSET)
+-		page = virt_to_page(vcpu->arch.pio_data);
++		page = virt_to_page(vcpu->common->arch.pio_data);
+ #endif
+ #ifdef CONFIG_KVM_MMIO
+ 	else if (vmf->pgoff == KVM_COALESCED_MMIO_PAGE_OFFSET)
+-- 
+2.55.0
+

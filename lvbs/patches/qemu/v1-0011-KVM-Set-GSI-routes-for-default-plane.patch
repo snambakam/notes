@@ -1,0 +1,67 @@
+From 743c96568194b326acb38acaf6b103abc6e2ba11 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Thu, 28 May 2026 06:27:14 +0000
+Subject: [RFC PATCH v1 11/18] KVM: Set GSI routes for default plane
+
+This ensures that all IOAPIC IRQs are routed to the default device
+plane in the KVM guest.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+(cherry picked from commit f9cbb0271dc7b9c0584c92688bd73f973b71e89a)
+---
+ accel/kvm/kvm-all.c | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/accel/kvm/kvm-all.c b/accel/kvm/kvm-all.c
+index 1d435d4a7f..46a14ac0f4 100644
+--- a/accel/kvm/kvm-all.c
++++ b/accel/kvm/kvm-all.c
+@@ -132,6 +132,7 @@ static int map_kvm_run(KVMState *s, CPUState *cpu, Error **errp);
+ static int map_kvm_dirty_gfns(KVMState *s, CPUState *cpu, Error **errp);
+ static int vcpu_unmap_regions(KVMState *s, CPUState *cpu);
+ static void kvm_alloc_vcpu_plane(CPUState *cpu, unsigned plane_id, int kvm_fd);
++static int kvm_create_plane(KVMState *s, unsigned id);
+ 
+ struct KVMResampleFd {
+     int gsi;
+@@ -2236,6 +2237,7 @@ void kvm_init_irq_routing(KVMState *s)
+ 
+ void kvm_irqchip_commit_routes(KVMState *s)
+ {
++    unsigned plane = qdev_default_plane();
+     int ret;
+ 
+     if (kvm_gsi_direct_mapping()) {
+@@ -2248,7 +2250,7 @@ void kvm_irqchip_commit_routes(KVMState *s)
+ 
+     s->irq_routes->flags = 0;
+     trace_kvm_irqchip_commit_routes();
+-    ret = kvm_vm_ioctl(s, KVM_SET_GSI_ROUTING, s->irq_routes);
++    ret = kvm_vm_plane_ioctl(s, plane, KVM_SET_GSI_ROUTING, s->irq_routes);
+     assert(ret == 0);
+ }
+ 
+@@ -2665,6 +2667,8 @@ static int do_kvm_irqchip_create(KVMState *s)
+ 
+ static void kvm_irqchip_create(KVMState *s)
+ {
++    int device_plane = qdev_default_plane();
++
+     assert(s->kernel_irqchip_split != ON_OFF_AUTO_AUTO);
+ 
+     if (do_kvm_irqchip_create(s) < 0) {
+@@ -2677,6 +2681,11 @@ static void kvm_irqchip_create(KVMState *s)
+     kvm_async_interrupts_allowed = true;
+     kvm_halt_in_kernel_allowed = true;
+ 
++    /* Make sure irqchip target plane is known to KVM */
++    if (device_plane != 0) {
++        kvm_create_plane(s, device_plane);
++    }
++
+     kvm_init_irq_routing(s);
+ 
+     s->gsimap = g_hash_table_new(g_direct_hash, g_direct_equal);
+-- 
+2.55.0
+

@@ -1,0 +1,62 @@
+From 8b8d49b762413c02537ee67228da9c7b3d6301ab Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <jroedel@suse.de>
+Date: Fri, 3 Mar 2023 16:49:54 +0100
+Subject: [RFC PATCH v1 02/18] ACPI: Rebuild ACPI tables on every
+ read
+
+The additional read of the ACPI tables in SVSM throws something off in
+Qemu and as a result Linux will not boot without errors or at all.
+
+See https://github.com/coconut-svsm/svsm/issues/646
+
+Signed-off-by: Joerg Roedel <jroedel@suse.de>
+(cherry picked from commit 133da2c5f65541271b3d377d7e49a944f72b64f7)
+Signed-off-by: Oliver Steffen <osteffen@redhat.com>
+(cherry picked from commit 995cf11001d680e3afd9d66340a63d966bf0d2c4)
+---
+ hw/i386/acpi-build.c | 13 ++-----------
+ 1 file changed, 2 insertions(+), 11 deletions(-)
+
+diff --git a/hw/i386/acpi-build.c b/hw/i386/acpi-build.c
+index 8837b69687..5c4568a713 100644
+--- a/hw/i386/acpi-build.c
++++ b/hw/i386/acpi-build.c
+@@ -2237,11 +2237,10 @@ static void acpi_build_update(void *build_opaque)
+     AcpiBuildState *build_state = build_opaque;
+     AcpiBuildTables tables;
+ 
+-    /* No state to update or already patched? Nothing to do. */
+-    if (!build_state || build_state->patched) {
++    /* No state? Nothing to do. */
++    if (!build_state) {
+         return;
+     }
+-    build_state->patched = 1;
+ 
+     acpi_build_tables_init(&tables);
+ 
+@@ -2255,12 +2254,6 @@ static void acpi_build_update(void *build_opaque)
+     acpi_build_tables_cleanup(&tables, true);
+ }
+ 
+-static void acpi_build_reset(void *build_opaque)
+-{
+-    AcpiBuildState *build_state = build_opaque;
+-    build_state->patched = 0;
+-}
+-
+ static const VMStateDescription vmstate_acpi_build = {
+     .name = "acpi_build",
+     .version_id = 1,
+@@ -2339,8 +2332,6 @@ void acpi_setup(void)
+                                              build_state, tables.rsdp,
+                                              ACPI_BUILD_RSDP_FILE);
+ 
+-    qemu_register_reset(acpi_build_reset, build_state);
+-    acpi_build_reset(build_state);
+     vmstate_register(NULL, 0, &vmstate_acpi_build, build_state);
+ 
+     /* Cleanup tables but don't free the memory: we track it
+-- 
+2.55.0
+

@@ -1,0 +1,33 @@
+From 5a0f74ace5dc844045dc881f55e149c3a68342ed Mon Sep 17 00:00:00 2001
+From: Tom Lendacky <thomas.lendacky@amd.com>
+Date: Thu, 19 Jun 2025 14:38:45 -0500
+Subject: [RFC PATCH v1 060/132] kvm: svm: Advertise full multi-VMPL
+ support to the SNP guest
+
+Indicate full multi-VMPL support to the guest through the GHCB feature
+bitmap.
+
+Signed-off-by: Tom Lendacky <thomas.lendacky@amd.com>
+Co-developed-by: Joerg Roedel <joerg.roedel@amd.com>
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/x86/kvm/svm/sev.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/arch/x86/kvm/svm/sev.c b/arch/x86/kvm/svm/sev.c
+index 7f58704c45cd..53e76d22eb08 100644
+--- a/arch/x86/kvm/svm/sev.c
++++ b/arch/x86/kvm/svm/sev.c
+@@ -44,7 +44,8 @@
+ #define GHCB_HV_FT_SUPPORTED	(GHCB_HV_FT_SNP			| \
+ 				 GHCB_HV_FT_SNP_AP_CREATION	| \
+ 				 GHCB_HV_FT_SNP_RINJ		| \
+-				 GHCB_HV_FT_APIC_ID_LIST)
++				 GHCB_HV_FT_APIC_ID_LIST	| \
++				 GHCB_HV_FT_SNP_MULTI_VMPL)
+ 
+ /*
+  * The GHCB spec essentially states that all non-zero error codes other than
+-- 
+2.55.0
+

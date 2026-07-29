@@ -1,0 +1,64 @@
+From d03e89eb1d44ff4d666311a6d021eb556f11a513 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Tue, 31 Mar 2026 08:11:48 +0000
+Subject: [RFC PATCH v1 034/132] kvm: Keep track of plane VCPUs in
+ struct kvm_vcpu_common
+
+Introduce an array which keeps track of per-plane VCPU instances for a
+single VCPU index. This is a short-cut to not always tranverse the
+xarrays on plane switches.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ include/linux/kvm_host.h | 6 ++++++
+ virt/kvm/kvm_main.c      | 3 +++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/include/linux/kvm_host.h b/include/linux/kvm_host.h
+index c8c7c4007d3b..b2a5cad8400c 100644
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -335,6 +335,8 @@ struct kvm_vcpu_common {
+ 	/* Currently active VCPU */
+ 	struct kvm_vcpu *current_vcpu;
+ 
++	struct kvm_vcpu *vcpus[KVM_MAX_PLANES];
++
+ 	/* Locks */
+ 	int ____srcu_idx; /* Don't use this directly.  You've been warned. */
+ #ifdef CONFIG_PROVE_RCU
+@@ -382,6 +384,10 @@ struct kvm_vcpu_common {
+ 	struct kvm_vcpu_arch_common arch;
+ };
+ 
++#define vcpu_for_each_plane(common, i, v)			\
++	for ((i) = 0; (i) < KVM_MAX_PLANES; ++(i))		\
++		if (((v) = common->vcpus[(i)]) != NULL)
++
+ struct kvm_vcpu {
+ 	struct kvm *kvm;
+ 	struct kvm_plane *plane;
+diff --git a/virt/kvm/kvm_main.c b/virt/kvm/kvm_main.c
+index 4e5c32b34729..fd10792404ff 100644
+--- a/virt/kvm/kvm_main.c
++++ b/virt/kvm/kvm_main.c
+@@ -526,6 +526,8 @@ static int kvm_vcpu_init_common(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned
+ 
+ static void kvm_vcpu_finish_common(struct kvm_vcpu *vcpu)
+ {
++	WARN_ON(vcpu->common->vcpus[vcpu->plane_level] != NULL);
++	vcpu->common->vcpus[vcpu->plane_level] = vcpu;
+ 	smp_wmb();
+ 	if (vcpu->plane_level == 0) {
+ 		/*
+@@ -557,6 +559,7 @@ static void kvm_vcpu_common_destroy(struct kvm_vcpu *vcpu)
+ 
+ 	vcpu->common = NULL;
+ 	vcpu->run = NULL;
++	common->vcpus[vcpu->plane_level] = NULL;
+ 
+ 	if (vcpu->plane_level != 0)
+ 	       return;
+-- 
+2.55.0
+

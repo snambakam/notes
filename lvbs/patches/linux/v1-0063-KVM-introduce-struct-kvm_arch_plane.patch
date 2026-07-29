@@ -1,0 +1,62 @@
+From 6f5ac64a9b43e3746bea8dade307522692dd3249 Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Tue, 1 Apr 2025 11:52:48 +0200
+Subject: [RFC PATCH v1 063/132] KVM: introduce struct
+ kvm_arch_plane
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+---
+ arch/loongarch/include/asm/kvm_host.h | 5 +++++
+ arch/x86/include/asm/kvm_host.h       | 6 ++++++
+ 2 files changed, 11 insertions(+)
+
+diff --git a/arch/loongarch/include/asm/kvm_host.h b/arch/loongarch/include/asm/kvm_host.h
+index 0b48ecde8ea7..41eefb96b9a3 100644
+--- a/arch/loongarch/include/asm/kvm_host.h
++++ b/arch/loongarch/include/asm/kvm_host.h
+@@ -76,6 +76,9 @@ struct kvm_arch_memory_slot {
+ 	unsigned long flags;
+ };
+ 
++struct kvm_arch_plane {
++};
++
+ #define HOST_MAX_PMNUM			16
+ struct kvm_context {
+ 	unsigned long vpid_cache;
+@@ -359,6 +362,8 @@ static inline bool kvm_is_ifetch_fault(struct kvm_vcpu_arch *arch)
+ }
+ 
+ /* Misc */
++static inline void kvm_arch_init_plane(struct kvm_plane *plane) {}
++static inline void kvm_arch_free_plane(struct kvm_plane *plane) {}
+ static inline void kvm_arch_hardware_unsetup(void) {}
+ static inline void kvm_arch_memslots_updated(struct kvm *kvm, u64 gen) {}
+ static inline void kvm_arch_vcpu_blocking(struct kvm_vcpu *vcpu) {}
+diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
+index b915b4ba0412..fcb5f714b83f 100644
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -1160,6 +1160,9 @@ struct kvm_arch_memory_slot {
+ 	unsigned short *gfn_write_track;
+ };
+ 
++struct kvm_arch_plane {
++};
++
+ /*
+  * Track the mode of the optimized logical map, as the rules for decoding the
+  * destination vary per mode.  Enabling the optimized logical map requires all
+@@ -2514,6 +2517,9 @@ void kvm_make_scan_ioapic_request(struct kvm *kvm);
+ void kvm_make_scan_ioapic_request_mask(struct kvm *kvm,
+ 				       unsigned long *vcpu_bitmap);
+ 
++static inline void kvm_arch_init_plane(struct kvm_plane *plane) {}
++static inline void kvm_arch_free_plane(struct kvm_plane *plane) {}
++
+ bool kvm_arch_async_page_not_present(struct kvm_vcpu *vcpu,
+ 				     struct kvm_async_pf *work);
+ void kvm_arch_async_page_present(struct kvm_vcpu *vcpu,
+-- 
+2.55.0
+

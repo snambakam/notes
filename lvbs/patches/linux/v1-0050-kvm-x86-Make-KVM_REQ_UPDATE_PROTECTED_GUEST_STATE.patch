@@ -1,0 +1,29 @@
+From f9e2866125db9c3f1d75e717c0d6cabf8ee28ce4 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Thu, 21 May 2026 08:00:40 +0000
+Subject: [RFC PATCH v1 050/132] kvm: x86: Make
+ KVM_REQ_UPDATE_PROTECTED_GUEST_STATE per plane
+
+The VMSAs are per plane, so this request must be too.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/x86/include/asm/kvm_host.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
+index 37ae0faa6ad5..e17afcc54dbb 100644
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -129,7 +129,7 @@
+ #define KVM_REQ_HV_TLB_FLUSH \
+ 	KVM_ARCH_REQ_FLAGS(32, KVM_REQUEST_WAIT | KVM_REQUEST_NO_WAKEUP)
+ #define KVM_REQ_UPDATE_PROTECTED_GUEST_STATE \
+-	KVM_ARCH_REQ_FLAGS(34, KVM_REQUEST_WAIT)
++	KVM_ARCH_REQ_FLAGS(34, KVM_REQUEST_WAIT | KVM_REQUEST_PER_PLANE)
+ 
+ #define CR0_RESERVED_BITS                                               \
+ 	(~(unsigned long)(X86_CR0_PE | X86_CR0_MP | X86_CR0_EM | X86_CR0_TS \
+-- 
+2.55.0
+

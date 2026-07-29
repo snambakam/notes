@@ -1,0 +1,236 @@
+From b8e5e58c1b9586dbe3561b9d3e5d68dfc430af0d Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Thu, 16 Apr 2026 14:43:09 +0000
+Subject: [RFC PATCH v1 039/132] kvm: Make KVM_SET_GSI_ROUTING per
+ plane
+
+Allow the KVM_SET_GSI_ROUTING on each plane. There is still only one
+GSI routing table maintained per VM by the KVM module, the plane this
+IOCTL was last issued at will get all GSI interrupts.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/arm64/kvm/vgic/vgic-irqfd.c  |  2 +-
+ arch/loongarch/kvm/intc/pch_pic.c |  2 +-
+ arch/powerpc/kvm/mpic.c           |  2 +-
+ arch/riscv/kvm/vm.c               |  2 +-
+ arch/x86/kvm/irq.c                |  2 +-
+ include/linux/kvm_host.h          |  3 +-
+ virt/kvm/irqchip.c                | 10 +++--
+ virt/kvm/kvm_main.c               | 65 ++++++++++++++++---------------
+ 8 files changed, 47 insertions(+), 41 deletions(-)
+
+diff --git a/arch/arm64/kvm/vgic/vgic-irqfd.c b/arch/arm64/kvm/vgic/vgic-irqfd.c
+index 89d0eb8b582a..9ad53ed9b652 100644
+--- a/arch/arm64/kvm/vgic/vgic-irqfd.c
++++ b/arch/arm64/kvm/vgic/vgic-irqfd.c
+@@ -159,7 +159,7 @@ int kvm_vgic_setup_default_irq_routing(struct kvm *kvm)
+ 		entries[i].u.irqchip.irqchip = 0;
+ 		entries[i].u.irqchip.pin = i;
+ 	}
+-	ret = kvm_set_irq_routing(kvm, entries, nr, 0);
++	ret = kvm_set_irq_routing(kvm, entries, nr, 0, 0);
+ 	kfree(entries);
+ 	return ret;
+ }
+diff --git a/arch/loongarch/kvm/intc/pch_pic.c b/arch/loongarch/kvm/intc/pch_pic.c
+index 175a630aceb4..330f5bb0e1a2 100644
+--- a/arch/loongarch/kvm/intc/pch_pic.c
++++ b/arch/loongarch/kvm/intc/pch_pic.c
+@@ -423,7 +423,7 @@ static int kvm_setup_default_irq_routing(struct kvm *kvm)
+ 		entries[i].u.irqchip.irqchip = 0;
+ 		entries[i].u.irqchip.pin = i;
+ 	}
+-	ret = kvm_set_irq_routing(kvm, entries, nr, 0);
++	ret = kvm_set_irq_routing(kvm, entries, nr, 0, 0);
+ 	kfree(entries);
+ 
+ 	return ret;
+diff --git a/arch/powerpc/kvm/mpic.c b/arch/powerpc/kvm/mpic.c
+index 6b6eba7fbf75..1e493179ee4f 100644
+--- a/arch/powerpc/kvm/mpic.c
++++ b/arch/powerpc/kvm/mpic.c
+@@ -1646,7 +1646,7 @@ static int mpic_set_default_irq_routing(struct openpic *opp)
+ 	if (!routing)
+ 		return -ENOMEM;
+ 
+-	kvm_set_irq_routing(opp->kvm, routing, 0, 0);
++	kvm_set_irq_routing(opp->kvm, routing, 0, 0, 0);
+ 
+ 	kfree(routing);
+ 	return 0;
+diff --git a/arch/riscv/kvm/vm.c b/arch/riscv/kvm/vm.c
+index 6b3c8a0e74e2..bd9ab3240e4f 100644
+--- a/arch/riscv/kvm/vm.c
++++ b/arch/riscv/kvm/vm.c
+@@ -105,7 +105,7 @@ int kvm_riscv_setup_default_irq_routing(struct kvm *kvm, u32 lines)
+ 		ents[i].u.irqchip.irqchip = 0;
+ 		ents[i].u.irqchip.pin = i;
+ 	}
+-	rc = kvm_set_irq_routing(kvm, ents, lines, 0);
++	rc = kvm_set_irq_routing(kvm, ents, lines, 0, 0);
+ 	kfree(ents);
+ 
+ 	return rc;
+diff --git a/arch/x86/kvm/irq.c b/arch/x86/kvm/irq.c
+index 9cab28ab4d3b..ee08f086f5ef 100644
+--- a/arch/x86/kvm/irq.c
++++ b/arch/x86/kvm/irq.c
+@@ -578,7 +578,7 @@ static const struct kvm_irq_routing_entry default_routing[] = {
+ int kvm_setup_default_ioapic_and_pic_routing(struct kvm *kvm)
+ {
+ 	return kvm_set_irq_routing(kvm, default_routing,
+-				   ARRAY_SIZE(default_routing), 0);
++				   ARRAY_SIZE(default_routing), 0, 0);
+ }
+ 
+ int kvm_vm_ioctl_get_irqchip(struct kvm *kvm, struct kvm_irqchip *chip)
+diff --git a/include/linux/kvm_host.h b/include/linux/kvm_host.h
+index 5431c9780f2a..4297fa7294c8 100644
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -2355,7 +2355,8 @@ bool kvm_arch_can_set_irq_routing(struct kvm *kvm);
+ int kvm_set_irq_routing(struct kvm *kvm,
+ 			const struct kvm_irq_routing_entry *entries,
+ 			unsigned nr,
+-			unsigned flags);
++			unsigned flags,
++			unsigned plane_level);
+ int kvm_init_irq_routing(struct kvm *kvm);
+ int kvm_set_routing_entry(struct kvm *kvm,
+ 			  struct kvm_kernel_irq_routing_entry *e,
+diff --git a/virt/kvm/irqchip.c b/virt/kvm/irqchip.c
+index a4fea7d8dde6..e0793ae0c719 100644
+--- a/virt/kvm/irqchip.c
++++ b/virt/kvm/irqchip.c
+@@ -128,7 +128,8 @@ void kvm_free_irq_routing(struct kvm *kvm)
+ static int setup_routing_entry(struct kvm *kvm,
+ 			       struct kvm_irq_routing_table *rt,
+ 			       struct kvm_kernel_irq_routing_entry *e,
+-			       const struct kvm_irq_routing_entry *ue)
++			       const struct kvm_irq_routing_entry *ue,
++			       unsigned plane_level)
+ {
+ 	struct kvm_kernel_irq_routing_entry *ei;
+ 	int r;
+@@ -146,7 +147,7 @@ static int setup_routing_entry(struct kvm *kvm,
+ 
+ 	e->gsi = gsi;
+ 	e->type = ue->type;
+-	r = kvm_set_routing_entry(kvm, e, ue, 0);
++	r = kvm_set_routing_entry(kvm, e, ue, plane_level);
+ 	if (r)
+ 		return r;
+ 	if (e->type == KVM_IRQ_ROUTING_IRQCHIP)
+@@ -169,7 +170,8 @@ bool __weak kvm_arch_can_set_irq_routing(struct kvm *kvm)
+ int kvm_set_irq_routing(struct kvm *kvm,
+ 			const struct kvm_irq_routing_entry *ue,
+ 			unsigned nr,
+-			unsigned flags)
++			unsigned flags,
++			unsigned plane_level)
+ {
+ 	struct kvm_irq_routing_table *new, *old;
+ 	struct kvm_kernel_irq_routing_entry *e;
+@@ -210,7 +212,7 @@ int kvm_set_irq_routing(struct kvm *kvm,
+ 				goto free_entry;
+ 			break;
+ 		}
+-		r = setup_routing_entry(kvm, new, e, ue);
++		r = setup_routing_entry(kvm, new, e, ue, plane_level);
+ 		if (r)
+ 			goto free_entry;
+ 		++ue;
+diff --git a/virt/kvm/kvm_main.c b/virt/kvm/kvm_main.c
+index 4996b8b92264..cc2e2e189f79 100644
+--- a/virt/kvm/kvm_main.c
++++ b/virt/kvm/kvm_main.c
+@@ -4943,6 +4943,37 @@ static long __kvm_plane_ioctl(struct kvm_plane *plane, unsigned int ioctl, unsig
+ 		break;
+ 	}
+ #endif
++#ifdef CONFIG_HAVE_KVM_IRQ_ROUTING
++	case KVM_SET_GSI_ROUTING: {
++		struct kvm_irq_routing routing;
++		struct kvm_irq_routing __user *urouting;
++		struct kvm_irq_routing_entry *entries = NULL;
++
++		r = -EFAULT;
++		if (copy_from_user(&routing, argp, sizeof(routing)))
++			goto out;
++		r = -EINVAL;
++		if (!kvm_arch_can_set_irq_routing(plane->kvm))
++			goto out;
++		if (routing.nr > KVM_MAX_IRQ_ROUTES)
++			goto out;
++		if (routing.flags)
++			goto out;
++		if (routing.nr) {
++			urouting = argp;
++			entries = vmemdup_array_user(urouting->entries,
++						     routing.nr, sizeof(*entries));
++			if (IS_ERR(entries)) {
++				r = PTR_ERR(entries);
++				goto out;
++			}
++		}
++		r = kvm_set_irq_routing(plane->kvm, entries, routing.nr,
++					routing.flags, plane->level);
++		kvfree(entries);
++		break;
++	}
++#endif /* CONFIG_HAVE_KVM_IRQ_ROUTING */
+ 	default:
+ 		r = -ENOTTY;
+ 	}
+@@ -5533,6 +5564,9 @@ static long kvm_vm_ioctl(struct file *filp,
+ 	case KVM_CREATE_VCPU:
+ #ifdef CONFIG_HAVE_KVM_MSI
+ 	case KVM_SIGNAL_MSI:
++#endif
++#ifdef CONFIG_HAVE_KVM_IRQ_ROUTING
++	case KVM_SET_GSI_ROUTING:
+ #endif
+ 		r = __kvm_plane_ioctl(kvm->planes[0], ioctl, arg);
+ 		break;
+@@ -5662,37 +5696,6 @@ static long kvm_vm_ioctl(struct file *filp,
+ 		break;
+ 	}
+ #endif
+-#ifdef CONFIG_HAVE_KVM_IRQ_ROUTING
+-	case KVM_SET_GSI_ROUTING: {
+-		struct kvm_irq_routing routing;
+-		struct kvm_irq_routing __user *urouting;
+-		struct kvm_irq_routing_entry *entries = NULL;
+-
+-		r = -EFAULT;
+-		if (copy_from_user(&routing, argp, sizeof(routing)))
+-			goto out;
+-		r = -EINVAL;
+-		if (!kvm_arch_can_set_irq_routing(kvm))
+-			goto out;
+-		if (routing.nr > KVM_MAX_IRQ_ROUTES)
+-			goto out;
+-		if (routing.flags)
+-			goto out;
+-		if (routing.nr) {
+-			urouting = argp;
+-			entries = vmemdup_array_user(urouting->entries,
+-						     routing.nr, sizeof(*entries));
+-			if (IS_ERR(entries)) {
+-				r = PTR_ERR(entries);
+-				goto out;
+-			}
+-		}
+-		r = kvm_set_irq_routing(kvm, entries, routing.nr,
+-					routing.flags);
+-		kvfree(entries);
+-		break;
+-	}
+-#endif /* CONFIG_HAVE_KVM_IRQ_ROUTING */
+ #ifdef CONFIG_KVM_GENERIC_MEMORY_ATTRIBUTES
+ 	case KVM_SET_MEMORY_ATTRIBUTES: {
+ 		struct kvm_memory_attributes attrs;
+-- 
+2.55.0
+

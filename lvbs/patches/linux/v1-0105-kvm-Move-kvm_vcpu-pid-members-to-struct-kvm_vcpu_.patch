@@ -1,0 +1,30 @@
+From 8245214de86718df7d0b4fe1df9811c2ee656f5e Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Thu, 5 Mar 2026 10:54:09 +0100
+Subject: [RFC PATCH v1 105/132] kvm: Move kvm_vcpu pid members to
+ struct kvm_vcpu_common
+
+These are the same across all planes for one VCPU, so make then
+shared.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/arm64/kvm/arm.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/arm64/kvm/arm.c b/arch/arm64/kvm/arm.c
+index e5ca713458d5..61f9ffe9e5e0 100644
+--- a/arch/arm64/kvm/arm.c
++++ b/arch/arm64/kvm/arm.c
+@@ -745,7 +745,7 @@ void kvm_arch_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
+ 	if (!cpumask_test_cpu(cpu, vcpu->kvm->arch.supported_cpus))
+ 		vcpu_set_on_unsupported_cpu(vcpu);
+ 
+-	vcpu->arch.pid = pid_nr(vcpu->pid);
++	vcpu->arch.pid = pid_nr(vcpu->common->pid);
+ }
+ 
+ void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu)
+-- 
+2.55.0
+

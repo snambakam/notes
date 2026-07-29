@@ -1,0 +1,116 @@
+From a8fc967f13abd86f99c383f8d691757c467c9356 Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Wed, 15 Apr 2026 13:21:05 +0000
+Subject: [RFC PATCH v1 038/132] kvm: Make KVM_SIGNAL_MSI per plane
+
+Allow the KVM_SIGNAL_MSI ioctl for every plane instead of per VM.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Co-developed-by: Joerg Roedel <joerg.roedel@amd.com>
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ include/linux/kvm_host.h |  2 +-
+ virt/kvm/irqchip.c       |  4 ++--
+ virt/kvm/kvm_main.c      | 27 ++++++++++++++++-----------
+ 3 files changed, 19 insertions(+), 14 deletions(-)
+
+diff --git a/include/linux/kvm_host.h b/include/linux/kvm_host.h
+index 0158a789cd09..5431c9780f2a 100644
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -2374,7 +2374,7 @@ static inline int kvm_init_irq_routing(struct kvm *kvm)
+ 
+ #endif
+ 
+-int kvm_send_userspace_msi(struct kvm *kvm, struct kvm_msi *msi);
++int kvm_send_userspace_msi(struct kvm *kvm, struct kvm_msi *msi, unsigned plane_level);
+ 
+ void kvm_eventfd_init(struct kvm *kvm);
+ int kvm_ioeventfd(struct kvm *kvm, struct kvm_ioeventfd *args);
+diff --git a/virt/kvm/irqchip.c b/virt/kvm/irqchip.c
+index 14480d1df4f9..a4fea7d8dde6 100644
+--- a/virt/kvm/irqchip.c
++++ b/virt/kvm/irqchip.c
+@@ -45,7 +45,7 @@ int kvm_irq_map_chip_pin(struct kvm *kvm, unsigned irqchip, unsigned pin)
+ 	return irq_rt->chip[irqchip][pin];
+ }
+ 
+-int kvm_send_userspace_msi(struct kvm *kvm, struct kvm_msi *msi)
++int kvm_send_userspace_msi(struct kvm *kvm, struct kvm_msi *msi, unsigned plane_level)
+ {
+ 	struct kvm_kernel_irq_routing_entry route;
+ 
+@@ -57,7 +57,7 @@ int kvm_send_userspace_msi(struct kvm *kvm, struct kvm_msi *msi)
+ 	route.msi.data = msi->data;
+ 	route.msi.flags = msi->flags;
+ 	route.msi.devid = msi->devid;
+-	route.msi.plane_level = 0;
++	route.msi.plane_level = plane_level;
+ 
+ 	return kvm_set_msi(&route, kvm, KVM_USERSPACE_IRQ_SOURCE_ID, 1, false);
+ }
+diff --git a/virt/kvm/kvm_main.c b/virt/kvm/kvm_main.c
+index a38df8740d58..4996b8b92264 100644
+--- a/virt/kvm/kvm_main.c
++++ b/virt/kvm/kvm_main.c
+@@ -4925,16 +4925,29 @@ static long kvm_vcpu_compat_ioctl(struct file *filp,
+ 
+ static long __kvm_plane_ioctl(struct kvm_plane *plane, unsigned int ioctl, unsigned long arg)
+ {
++	void __user *argp = (void __user *)arg;
+ 	long r;
+ 
+ 	switch (ioctl) {
+ 	case KVM_CREATE_VCPU:
+ 		r = kvm_plane_ioctl_create_vcpu(plane, arg);
+ 		break;
++#ifdef CONFIG_HAVE_KVM_MSI
++	case KVM_SIGNAL_MSI: {
++		struct kvm_msi msi;
++
++		r = -EFAULT;
++		if (copy_from_user(&msi, argp, sizeof(msi)))
++			goto out;
++		r = kvm_send_userspace_msi(plane->kvm, &msi, plane->level);
++		break;
++	}
++#endif
+ 	default:
+ 		r = -ENOTTY;
+ 	}
+ 
++out:
+ 	return r;
+ }
+ 
+@@ -5518,6 +5531,9 @@ static long kvm_vm_ioctl(struct file *filp,
+ 		r = kvm_vm_ioctl_create_plane(kvm, arg);
+ 		break;
+ 	case KVM_CREATE_VCPU:
++#ifdef CONFIG_HAVE_KVM_MSI
++	case KVM_SIGNAL_MSI:
++#endif
+ 		r = __kvm_plane_ioctl(kvm->planes[0], ioctl, arg);
+ 		break;
+ 	case KVM_ENABLE_CAP: {
+@@ -5622,17 +5638,6 @@ static long kvm_vm_ioctl(struct file *filp,
+ 		r = kvm_ioeventfd(kvm, &data);
+ 		break;
+ 	}
+-#ifdef CONFIG_HAVE_KVM_MSI
+-	case KVM_SIGNAL_MSI: {
+-		struct kvm_msi msi;
+-
+-		r = -EFAULT;
+-		if (copy_from_user(&msi, argp, sizeof(msi)))
+-			goto out;
+-		r = kvm_send_userspace_msi(kvm, &msi);
+-		break;
+-	}
+-#endif
+ #ifdef __KVM_HAVE_IRQ_LINE
+ 	case KVM_IRQ_LINE_STATUS:
+ 	case KVM_IRQ_LINE: {
+-- 
+2.55.0
+

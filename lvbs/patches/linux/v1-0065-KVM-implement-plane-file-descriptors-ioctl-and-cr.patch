@@ -1,0 +1,36 @@
+From 1a482404ba7dc1828e9df2cb365118e97c10149b Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Sun, 23 Mar 2025 18:36:40 +0100
+Subject: [RFC PATCH v1 065/132] KVM: implement plane file
+ descriptors ioctl and creation
+
+Add the file_operations for planes, the means to create new file
+descriptors for them, and the KVM_CHECK_EXTENSION implementation for
+the two new capabilities.
+
+KVM_SIGNAL_MSI and KVM_SET_MEMORY_ATTRIBUTES are now available
+through both vm and plane file descriptors, forward them to the
+same function that is used by the file_operations for planes.
+KVM_CHECK_EXTENSION instead remains separate, because it only
+advertises a very small subset of capabilities when applied to
+plane file descriptors.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+---
+ include/uapi/linux/kvm.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/include/uapi/linux/kvm.h b/include/uapi/linux/kvm.h
+index cfd682633b0e..b09d535129d1 100644
+--- a/include/uapi/linux/kvm.h
++++ b/include/uapi/linux/kvm.h
+@@ -1706,4 +1706,6 @@ struct kvm_pre_fault_memory {
+ 	__u64 padding[5];
+ };
+ 
++#define KVM_CREATE_PLANE	_IO(KVMIO, 0xd6)
++
+ #endif /* __LINUX_KVM_H */
+-- 
+2.55.0
+

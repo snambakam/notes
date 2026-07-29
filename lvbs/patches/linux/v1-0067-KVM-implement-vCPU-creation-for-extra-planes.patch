@@ -1,0 +1,48 @@
+From 951b5f695c159bdb8b1a611959e3e195102d5882 Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Mon, 31 Mar 2025 18:40:31 +0200
+Subject: [RFC PATCH v1 067/132] KVM: implement vCPU creation for
+ extra planes
+
+For userspace to have fun with planes it is probably useful to let them
+create vCPUs on the non-zero planes as well.  Since such vCPUs are backed
+by the same struct kvm_vcpu, these are regular vCPU file descriptors except
+that they only allow a small subset of ioctls (mostly get/set) and they
+share some of the backing resources, notably vcpu->run.
+
+TODO: prefault might be useful on non-default planes as well?
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+---
+ Documentation/virt/kvm/locking.rst | 3 +++
+ include/uapi/linux/kvm.h           | 1 +
+ 2 files changed, 4 insertions(+)
+
+diff --git a/Documentation/virt/kvm/locking.rst b/Documentation/virt/kvm/locking.rst
+index 662231e958a0..8c11ec760072 100644
+--- a/Documentation/virt/kvm/locking.rst
++++ b/Documentation/virt/kvm/locking.rst
+@@ -28,6 +28,9 @@ The acquisition orders for mutexes are as follows:
+   are taken on the waiting side when modifying memslots, so MMU notifiers
+   must not take either kvm->slots_lock or kvm->slots_arch_lock.
+ 
++- when VMs have multiple planes, vcpu->mutex for plane 0 can taken
++  outside vcpu->mutex for the same id and another plane
++
+ cpus_read_lock() vs kvm_lock:
+ 
+ - Taking cpus_read_lock() outside of kvm_lock is problematic, despite that
+diff --git a/include/uapi/linux/kvm.h b/include/uapi/linux/kvm.h
+index b09d535129d1..de670bd836bf 100644
+--- a/include/uapi/linux/kvm.h
++++ b/include/uapi/linux/kvm.h
+@@ -1707,5 +1707,6 @@ struct kvm_pre_fault_memory {
+ };
+ 
+ #define KVM_CREATE_PLANE	_IO(KVMIO, 0xd6)
++#define KVM_CREATE_VCPU_PLANE	_IO(KVMIO, 0xd7)
+ 
+ #endif /* __LINUX_KVM_H */
+-- 
+2.55.0
+

@@ -1,0 +1,68 @@
+From 36be92a182ce3f94cba0d977d04ae18c904d2ea8 Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Tue, 1 Apr 2025 12:58:09 +0200
+Subject: [RFC PATCH v1 069/132] KVM: x86: block creating irqchip if
+ planes are active
+
+Force creating the irqchip before planes, so that APICV_INHIBIT_REASON_ABSENT
+only needs to be removed from plane 0.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+---
+ Documentation/virt/kvm/api.rst | 6 ++++--
+ arch/x86/kvm/x86.c             | 2 +-
+ include/linux/kvm_host.h       | 1 +
+ 3 files changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/virt/kvm/api.rst b/Documentation/virt/kvm/api.rst
+index 274e7d624521..d38c2873e2ec 100644
+--- a/Documentation/virt/kvm/api.rst
++++ b/Documentation/virt/kvm/api.rst
+@@ -884,6 +884,8 @@ On s390, a dummy irq routing table is created.
+ Note that on s390 the KVM_CAP_S390_IRQCHIP vm capability needs to be enabled
+ before KVM_CREATE_IRQCHIP can be used.
+ 
++The interrupt controller must be created before any extra VM planes.
++
+ 
+ 4.25 KVM_IRQ_LINE
+ -----------------
+@@ -8096,8 +8098,8 @@ used in the IRQ routing table.  The first args[0] MSI routes are reserved
+ for the IOAPIC pins.  Whenever the LAPIC receives an EOI for these routes,
+ a KVM_EXIT_IOAPIC_EOI vmexit will be reported to userspace.
+ 
+-Fails if VCPU has already been created, or if the irqchip is already in the
+-kernel (i.e. KVM_CREATE_IRQCHIP has already been called).
++Fails if VCPUs or planes have already been created, or if the irqchip is
++already in the kernel (i.e. KVM_CREATE_IRQCHIP has already been called).
+ 
+ 7.6 KVM_CAP_S390_RI
+ -------------------
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index df97d4c34c09..a0a8818b3096 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -6787,7 +6787,7 @@ int kvm_vm_ioctl_enable_cap(struct kvm *kvm,
+ 		r = -EEXIST;
+ 		if (irqchip_in_kernel(kvm) || kvm->has_planes)
+ 			goto split_irqchip_unlock;
+-		if (kvm->created_vcpus)
++		if (kvm->created_vcpus || kvm->has_planes)
+ 			goto split_irqchip_unlock;
+ 		/* Pairs with irqchip_in_kernel. */
+ 		smp_wmb();
+diff --git a/include/linux/kvm_host.h b/include/linux/kvm_host.h
+index 9c177b25744c..d1e23c3c6828 100644
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -982,6 +982,7 @@ struct kvm {
+ 	bool dirty_ring_with_bitmap;
+ 	bool vm_bugged;
+ 	bool vm_dead;
++	bool has_planes;
+ 
+ #ifdef CONFIG_HAVE_KVM_PM_NOTIFIER
+ 	struct notifier_block pm_notifier;
+-- 
+2.55.0
+

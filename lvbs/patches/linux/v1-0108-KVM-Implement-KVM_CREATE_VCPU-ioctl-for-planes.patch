@@ -1,0 +1,177 @@
+From 95cd2895dc549edef7351bc3b6f3f65898d9035b Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Mon, 30 Mar 2026 11:36:49 +0000
+Subject: [RFC PATCH v1 108/132] KVM: Implement KVM_CREATE_VCPU
+ ioctl for planes
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Implement the KVM_CREATE_VCPU ioctl per plane. Also introduce an
+empty IOCTL path for the plane-vcpus, including per-architecture
+call-backs.
+
+Co-developed-by: Carlos López <clopez@suse.de>
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/arm64/kvm/arm.c       |  5 +++++
+ arch/loongarch/kvm/vcpu.c  |  5 +++++
+ arch/mips/kvm/mips.c       |  5 +++++
+ arch/powerpc/kvm/powerpc.c |  5 +++++
+ arch/riscv/kvm/vcpu.c      |  5 +++++
+ arch/s390/kvm/kvm-s390.c   |  5 +++++
+ arch/x86/kvm/x86.c         | 29 +++++++++++++++++++++++++++++
+ include/linux/kvm_host.h   |  1 +
+ 8 files changed, 60 insertions(+)
+
+diff --git a/arch/arm64/kvm/arm.c b/arch/arm64/kvm/arm.c
+index 61f9ffe9e5e0..d55be436bf16 100644
+--- a/arch/arm64/kvm/arm.c
++++ b/arch/arm64/kvm/arm.c
+@@ -1839,6 +1839,11 @@ static int kvm_arm_vcpu_set_events(struct kvm_vcpu *vcpu,
+ 	return __kvm_arm_vcpu_set_events(vcpu, events);
+ }
+ 
++bool kvm_arch_is_vcpu_plane_ioctl(unsigned ioctl)
++{
++	return false;
++}
++
+ long kvm_arch_vcpu_ioctl(struct file *filp,
+ 			 unsigned int ioctl, unsigned long arg)
+ {
+diff --git a/arch/loongarch/kvm/vcpu.c b/arch/loongarch/kvm/vcpu.c
+index 2b92da93d63e..2a0513d7c003 100644
+--- a/arch/loongarch/kvm/vcpu.c
++++ b/arch/loongarch/kvm/vcpu.c
+@@ -1231,6 +1231,11 @@ static int kvm_loongarch_vcpu_set_attr(struct kvm_vcpu *vcpu,
+ 	return ret;
+ }
+ 
++bool kvm_arch_is_vcpu_plane_ioctl(unsigned ioctl)
++{
++	return false;
++}
++
+ long kvm_arch_vcpu_ioctl(struct file *filp,
+ 			 unsigned int ioctl, unsigned long arg)
+ {
+diff --git a/arch/mips/kvm/mips.c b/arch/mips/kvm/mips.c
+index 5623c6e5da0a..6b714a31f23f 100644
+--- a/arch/mips/kvm/mips.c
++++ b/arch/mips/kvm/mips.c
+@@ -933,6 +933,11 @@ long kvm_arch_vcpu_unlocked_ioctl(struct file *filp, unsigned int ioctl,
+ 	return -ENOIOCTLCMD;
+ }
+ 
++bool kvm_arch_is_vcpu_plane_ioctl(unsigned ioctl)
++{
++	return false;
++}
++
+ long kvm_arch_vcpu_ioctl(struct file *filp, unsigned int ioctl,
+ 			 unsigned long arg)
+ {
+diff --git a/arch/powerpc/kvm/powerpc.c b/arch/powerpc/kvm/powerpc.c
+index 00312f36174f..efa89ade29c5 100644
+--- a/arch/powerpc/kvm/powerpc.c
++++ b/arch/powerpc/kvm/powerpc.c
+@@ -2055,6 +2055,11 @@ long kvm_arch_vcpu_unlocked_ioctl(struct file *filp, unsigned int ioctl,
+ 	return -ENOIOCTLCMD;
+ }
+ 
++bool kvm_arch_is_vcpu_plane_ioctl(unsigned ioctl)
++{
++	return false;
++}
++
+ long kvm_arch_vcpu_ioctl(struct file *filp,
+                          unsigned int ioctl, unsigned long arg)
+ {
+diff --git a/arch/riscv/kvm/vcpu.c b/arch/riscv/kvm/vcpu.c
+index 1a381d806c30..f618cd83d19a 100644
+--- a/arch/riscv/kvm/vcpu.c
++++ b/arch/riscv/kvm/vcpu.c
+@@ -267,6 +267,11 @@ long kvm_arch_vcpu_unlocked_ioctl(struct file *filp, unsigned int ioctl,
+ 	return -ENOIOCTLCMD;
+ }
+ 
++bool kvm_arch_is_vcpu_plane_ioctl(unsigned ioctl)
++{
++	return false;
++}
++
+ long kvm_arch_vcpu_ioctl(struct file *filp,
+ 			 unsigned int ioctl, unsigned long arg)
+ {
+diff --git a/arch/s390/kvm/kvm-s390.c b/arch/s390/kvm/kvm-s390.c
+index 325da3c109b1..adcb85592b1c 100644
+--- a/arch/s390/kvm/kvm-s390.c
++++ b/arch/s390/kvm/kvm-s390.c
+@@ -5532,6 +5532,11 @@ static int kvm_s390_handle_pv_vcpu_dump(struct kvm_vcpu *vcpu,
+ 	return ret;
+ }
+ 
++bool kvm_arch_is_vcpu_plane_ioctl(unsigned ioctl)
++{
++	return false;
++}
++
+ long kvm_arch_vcpu_ioctl(struct file *filp,
+ 			 unsigned int ioctl, unsigned long arg)
+ {
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index 3aec4e44b2b4..bd4b67cfe44c 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -6243,6 +6243,35 @@ static int kvm_get_reg_list(struct kvm_vcpu *vcpu,
+ 	return 0;
+ }
+ 
++bool kvm_arch_is_vcpu_plane_ioctl(unsigned ioctl)
++{
++	switch (ioctl) {
++	case KVM_GET_DEBUGREGS:
++	case KVM_SET_DEBUGREGS:
++	case KVM_GET_LAPIC:
++	case KVM_SET_LAPIC:
++	case KVM_GET_MSRS:
++	case KVM_SET_MSRS:
++	case KVM_GET_NESTED_STATE:
++	case KVM_SET_NESTED_STATE:
++	case KVM_GET_ONE_REG:
++	case KVM_SET_ONE_REG:
++	case KVM_GET_SREGS2:
++	case KVM_SET_SREGS2:
++	case KVM_GET_VCPU_EVENTS:
++	case KVM_SET_VCPU_EVENTS:
++	case KVM_GET_XCRS:
++	case KVM_SET_XCRS:
++	case KVM_GET_XSAVE:
++	case KVM_GET_XSAVE2:
++	case KVM_SET_XSAVE:
++	case KVM_GET_REG_LIST:
++		return true;
++	default:
++		return false;
++	}
++}
++
+ long kvm_arch_vcpu_ioctl(struct file *filp,
+ 			 unsigned int ioctl, unsigned long arg)
+ {
+diff --git a/include/linux/kvm_host.h b/include/linux/kvm_host.h
+index d1e23c3c6828..e989b293a34a 100644
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -1719,6 +1719,7 @@ bool kvm_mmu_unmap_gfn_range(struct kvm *kvm, struct kvm_gfn_range *range);
+ 
+ long kvm_arch_dev_ioctl(struct file *filp,
+ 			unsigned int ioctl, unsigned long arg);
++bool kvm_arch_is_vcpu_plane_ioctl(unsigned ioctl);
+ long kvm_arch_vcpu_ioctl(struct file *filp,
+ 			 unsigned int ioctl, unsigned long arg);
+ long kvm_arch_vcpu_unlocked_ioctl(struct file *filp,
+-- 
+2.55.0
+

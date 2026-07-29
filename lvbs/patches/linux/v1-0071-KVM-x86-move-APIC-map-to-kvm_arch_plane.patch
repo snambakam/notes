@@ -1,0 +1,35 @@
+From 10438a06abb2706db44c4cea5b2f176b8247a3c2 Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Tue, 1 Apr 2025 12:13:09 +0200
+Subject: [RFC PATCH v1 071/132] KVM: x86: move APIC map to
+ kvm_arch_plane
+
+IRQs need to be directed to the appropriate plane (typically, but not
+always, the same as the vCPU that is running).  Because each plane has
+a separate struct kvm_vcpu *, the map that holds the pointers to them
+must be individual to the plane as well.
+
+This works fine as long as all IRQs (even those directed at multiple CPUs)
+only target a single plane.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+---
+ arch/x86/kvm/svm/sev.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/arch/x86/kvm/svm/sev.c b/arch/x86/kvm/svm/sev.c
+index 79fee7ebc19b..fe5e05e2162d 100644
+--- a/arch/x86/kvm/svm/sev.c
++++ b/arch/x86/kvm/svm/sev.c
+@@ -569,7 +569,7 @@ static int __sev_guest_init(struct kvm *kvm, struct kvm_sev_cmd *argp,
+ 	INIT_LIST_HEAD(&sev->mirror_vms);
+ 	sev->need_init = false;
+ 
+-	kvm_set_apicv_inhibit(kvm->planes[0], APICV_INHIBIT_REASON_SEV);
++	kvm_set_apicv_inhibit(kvm->planes[[0], APICV_INHIBIT_REASON_SEV);
+ 
+ 	return 0;
+ 
+-- 
+2.55.0
+

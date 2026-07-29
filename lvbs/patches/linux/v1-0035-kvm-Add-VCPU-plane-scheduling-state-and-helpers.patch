@@ -1,0 +1,144 @@
+From bc0ed61e45714df843a226ea64747ba7c7c56f17 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Tue, 31 Mar 2026 09:06:11 +0000
+Subject: [RFC PATCH v1 035/132] kvm: Add VCPU plane-scheduling
+ state and helpers
+
+The algorithm is to always run the lowest runnable plane. Plane
+switches are done by stopping the current plane and setting another
+runnable.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ include/linux/kvm_host.h | 16 ++++++++++++++
+ virt/kvm/kvm_main.c      | 45 ++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 61 insertions(+)
+
+diff --git a/include/linux/kvm_host.h b/include/linux/kvm_host.h
+index b2a5cad8400c..117930081dff 100644
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -168,6 +168,7 @@ static inline bool kvm_is_error_gpa(gpa_t gpa)
+ #define KVM_REQ_VM_DEAD			(1 | KVM_REQUEST_WAIT | KVM_REQUEST_NO_WAKEUP)
+ #define KVM_REQ_UNBLOCK			2
+ #define KVM_REQ_DIRTY_RING_SOFT_FULL	3
++#define KVM_REQ_PLANE_RESCHED		4
+ #define KVM_REQUEST_ARCH_BASE		8
+ 
+ /*
+@@ -324,6 +325,8 @@ struct kvm_mmio_fragment {
+ 	unsigned int len;
+ };
+ 
++
++
+ struct kvm_vcpu_common {
+ 	struct kvm *kvm;
+ 
+@@ -381,6 +384,8 @@ struct kvm_vcpu_common {
+ 
+ 	struct kvm_dirty_ring dirty_ring;
+ 
++	bool plane_switch;
++
+ 	struct kvm_vcpu_arch_common arch;
+ };
+ 
+@@ -388,6 +393,12 @@ struct kvm_vcpu_common {
+ 	for ((i) = 0; (i) < KVM_MAX_PLANES; ++(i))		\
+ 		if (((v) = common->vcpus[(i)]) != NULL)
+ 
++/* Tracked per plane-VCPU - used for deciding which plane-vcpu to run */
++enum kvm_vcpu_state {
++	STOPPED,
++	RUNNABLE,
++};
++
+ struct kvm_vcpu {
+ 	struct kvm *kvm;
+ 	struct kvm_plane *plane;
+@@ -401,6 +412,7 @@ struct kvm_vcpu {
+ 	struct kvm_run *run;
+ 
+ 	u64 plane_requests;
++	enum kvm_vcpu_state plane_state;
+ 
+ 	/* S390 only */
+ 	bool valid_wakeup;
+@@ -440,6 +452,10 @@ struct kvm_vcpu {
+ 	unsigned plane_level;
+ };
+ 
++void kvm_vcpu_set_plane_runnable(struct kvm_vcpu *vcpu);
++void kvm_vcpu_set_plane_stopped(struct kvm_vcpu *vcpu);
++struct kvm_vcpu *kvm_vcpu_select_plane(struct kvm_vcpu *vcpu);
++
+ static inline bool kvm_vcpu_wants_to_run(struct kvm_vcpu *vcpu)
+ {
+ 	return vcpu->common->wants_to_run;
+diff --git a/virt/kvm/kvm_main.c b/virt/kvm/kvm_main.c
+index fd10792404ff..a38df8740d58 100644
+--- a/virt/kvm/kvm_main.c
++++ b/virt/kvm/kvm_main.c
+@@ -4399,6 +4399,7 @@ static int kvm_plane_ioctl_create_vcpu(struct kvm_plane *plane, unsigned long id
+ 	vcpu->vcpu_idx = vcpu->common->vcpu_idx;
+ 	vcpu->plane = plane;
+ 	vcpu->plane_level = plane->level;
++	vcpu->plane_state = STOPPED;
+ 	vcpu->run = vcpu->common->run;
+ 
+ 	kvm_vcpu_init(vcpu, kvm, id);
+@@ -4962,6 +4963,50 @@ static struct file_operations kvm_plane_fops = {
+ 	KVM_COMPAT(kvm_plane_ioctl),
+ };
+ 
++void kvm_vcpu_set_plane_runnable(struct kvm_vcpu *vcpu)
++{
++	vcpu->plane_state = RUNNABLE;
++	vcpu->common->plane_switch = true;
++	kvm_make_request(KVM_REQ_PLANE_RESCHED, vcpu);
++}
++EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_vcpu_set_plane_runnable);
++
++void kvm_vcpu_set_plane_stopped(struct kvm_vcpu *vcpu)
++{
++	vcpu->plane_state = STOPPED;
++	kvm_make_request(KVM_REQ_PLANE_RESCHED, vcpu);
++}
++EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_vcpu_set_plane_stopped);
++
++struct kvm_vcpu *kvm_vcpu_select_plane(struct kvm_vcpu *vcpu)
++{
++	struct kvm_vcpu_common *common = vcpu->common;
++	struct kvm_vcpu *ret = NULL;
++	unsigned i;
++
++	for (i = 0; i < KVM_MAX_PLANES; i++) {
++		if (common->vcpus[i] == NULL)
++			continue;
++
++		if (common->vcpus[i]->plane_state == RUNNABLE) {
++			ret = common->vcpus[i];
++			break;
++		}
++	}
++
++	if (ret == NULL) {
++		ret = common->vcpus[0];
++		ret->plane_state = RUNNABLE;
++	}
++
++	common->current_vcpu = ret;
++
++	common->plane_switch = false;
++
++	return ret;
++}
++EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_vcpu_select_plane);
++
+ static int kvm_device_mmap(struct file *filp, struct vm_area_struct *vma)
+ {
+ 	struct kvm_device *dev = filp->private_data;
+-- 
+2.55.0
+

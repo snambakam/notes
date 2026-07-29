@@ -1,0 +1,167 @@
+From aed5f9e50bbff854abddfa29da0f4d15e4e17334 Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Tue, 24 Mar 2026 11:14:40 +0000
+Subject: [RFC PATCH v1 028/132] kvm: Implement KVM_CAP_PLANES
+
+Introduce an architecture call-back to request the VM-specific maximum
+number of supported planes. Use that to implement the KVM_CAP_PLANES
+capability check.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Co-developed-by: Joerg Roedel <joerg.roedel@amd.com>
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/arm64/kvm/arm.c       | 5 +++++
+ arch/loongarch/kvm/vm.c    | 5 +++++
+ arch/mips/kvm/mips.c       | 5 +++++
+ arch/powerpc/kvm/powerpc.c | 5 +++++
+ arch/riscv/kvm/main.c      | 5 +++++
+ arch/s390/kvm/kvm-s390.c   | 5 +++++
+ arch/x86/kvm/x86.c         | 5 +++++
+ include/linux/kvm_host.h   | 2 ++
+ virt/kvm/kvm_main.c        | 4 ++++
+ 9 files changed, 41 insertions(+)
+
+diff --git a/arch/arm64/kvm/arm.c b/arch/arm64/kvm/arm.c
+index e5a16f4eb85e..ac8d6dfff7d7 100644
+--- a/arch/arm64/kvm/arm.c
++++ b/arch/arm64/kvm/arm.c
+@@ -201,6 +201,11 @@ static int kvm_arm_default_max_vcpus(void)
+ 	return vgic_present ? kvm_vgic_get_max_vcpus() : KVM_MAX_VCPUS;
+ }
+ 
++unsigned kvm_arch_max_planes(struct kvm *kvm)
++{
++	return 1;
++}
++
+ /**
+  * kvm_arch_init_vm - initializes a VM data structure
+  * @kvm:	pointer to the KVM struct
+diff --git a/arch/loongarch/kvm/vm.c b/arch/loongarch/kvm/vm.c
+index 1317c718f896..14f1232c6e0c 100644
+--- a/arch/loongarch/kvm/vm.c
++++ b/arch/loongarch/kvm/vm.c
+@@ -109,6 +109,11 @@ void kvm_arch_destroy_vm(struct kvm *kvm)
+ 	kvm->arch.phyid_map = NULL;
+ }
+ 
++unsigned kvm_arch_max_planes(struct kvm *kvm)
++{
++	return 1;
++}
++
+ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
+ {
+ 	int r;
+diff --git a/arch/mips/kvm/mips.c b/arch/mips/kvm/mips.c
+index 776aba0af096..60870452119d 100644
+--- a/arch/mips/kvm/mips.c
++++ b/arch/mips/kvm/mips.c
+@@ -115,6 +115,11 @@ int kvm_arch_vcpu_runnable(struct kvm_vcpu *vcpu)
+ 	return !!(vcpu->arch.pending_exceptions);
+ }
+ 
++unsigned kvm_arch_max_planes(struct kvm *kvm)
++{
++	return 1;
++}
++
+ bool kvm_arch_vcpu_in_kernel(struct kvm_vcpu *vcpu)
+ {
+ 	return false;
+diff --git a/arch/powerpc/kvm/powerpc.c b/arch/powerpc/kvm/powerpc.c
+index 5d94e0f676ec..cfa40be20e00 100644
+--- a/arch/powerpc/kvm/powerpc.c
++++ b/arch/powerpc/kvm/powerpc.c
+@@ -499,6 +499,11 @@ void kvm_arch_destroy_vm(struct kvm *kvm)
+ 	module_put(kvm->arch.kvm_ops->owner);
+ }
+ 
++unsigned kvm_arch_max_planes(struct kvm *kvm)
++{
++	return 1;
++}
++
+ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
+ {
+ 	int r;
+diff --git a/arch/riscv/kvm/main.c b/arch/riscv/kvm/main.c
+index 0924c75100a2..9033e3653cef 100644
+--- a/arch/riscv/kvm/main.c
++++ b/arch/riscv/kvm/main.c
+@@ -17,6 +17,11 @@
+ 
+ DEFINE_STATIC_KEY_FALSE(kvm_riscv_vsstage_tlb_no_gpa);
+ 
++unsigned kvm_arch_max_planes(struct kvm *kvm)
++{
++	return 1;
++}
++
+ static void kvm_riscv_setup_vendor_features(void)
+ {
+ 	/* Andes AX66: split two-stage TLBs */
+diff --git a/arch/s390/kvm/kvm-s390.c b/arch/s390/kvm/kvm-s390.c
+index 951b3046c480..cf28cbec8e90 100644
+--- a/arch/s390/kvm/kvm-s390.c
++++ b/arch/s390/kvm/kvm-s390.c
+@@ -3251,6 +3251,11 @@ static void sca_dispose(struct kvm *kvm)
+ 	kvm->arch.sca = NULL;
+ }
+ 
++unsigned kvm_arch_max_planes(struct kvm *kvm)
++{
++	return 1;
++}
++
+ void kvm_arch_free_vm(struct kvm *kvm)
+ {
+ 	if (IS_ENABLED(CONFIG_VFIO_PCI_ZDEV_KVM))
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index f8ad7ec4d2b9..9950a37f21d6 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -473,6 +473,11 @@ static u32 msr_based_features[ARRAY_SIZE(msr_based_features_all_except_vmx) +
+ 			      (KVM_LAST_EMULATED_VMX_MSR - KVM_FIRST_EMULATED_VMX_MSR + 1)];
+ static unsigned int num_msr_based_features;
+ 
++unsigned kvm_arch_max_planes(struct kvm *kvm)
++{
++	return 1;
++}
++
+ /*
+  * All feature MSRs except uCode revID, which tracks the currently loaded uCode
+  * patch, are immutable once the vCPU model is defined.
+diff --git a/include/linux/kvm_host.h b/include/linux/kvm_host.h
+index f7197e953ecf..fa2f3f3c4f80 100644
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -1156,6 +1156,8 @@ void kvm_unlock_all_vcpus(struct kvm *kvm);
+ void vcpu_load(struct kvm_vcpu *vcpu);
+ void vcpu_put(struct kvm_vcpu *vcpu);
+ 
++unsigned kvm_arch_max_planes(struct kvm *kvm);
++
+ #ifdef CONFIG_KVM_IOAPIC
+ void kvm_arch_post_irq_ack_notifier_list_update(struct kvm *kvm);
+ #else
+diff --git a/virt/kvm/kvm_main.c b/virt/kvm/kvm_main.c
+index 1cf00aca28ec..5f12beb9cb18 100644
+--- a/virt/kvm/kvm_main.c
++++ b/virt/kvm/kvm_main.c
+@@ -5081,6 +5081,10 @@ static int kvm_vm_ioctl_check_extension_generic(struct kvm *kvm, long arg)
+ 	case KVM_CAP_GUEST_MEMFD_FLAGS:
+ 		return kvm_gmem_get_supported_flags(kvm);
+ #endif
++	case KVM_CAP_PLANES:
++		if (kvm)
++			return kvm_arch_max_planes(kvm);
++		return 1;
+ 	default:
+ 		break;
+ 	}
+-- 
+2.55.0
+

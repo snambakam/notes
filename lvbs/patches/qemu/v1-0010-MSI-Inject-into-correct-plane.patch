@@ -1,0 +1,101 @@
+From 78f3f0a900ab179e8a9fa3f4251c6673b3527056 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Tue, 19 Aug 2025 08:39:50 +0000
+Subject: [RFC PATCH v1 10/18] MSI: Inject into correct plane
+
+Inject MSI and MSI-X IRQs into the correct device plane.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+(cherry picked from commit 39bc46c9594a4913c1b11651a7f5d27cab01934e)
+---
+ accel/kvm/kvm-all.c  | 2 +-
+ hw/i386/kvm/apic.c   | 6 +++++-
+ hw/pci/msi.c         | 3 +++
+ hw/pci/msix.c        | 3 +++
+ include/hw/pci/msi.h | 1 +
+ 5 files changed, 13 insertions(+), 2 deletions(-)
+
+diff --git a/accel/kvm/kvm-all.c b/accel/kvm/kvm-all.c
+index e35e6043b8..1d435d4a7f 100644
+--- a/accel/kvm/kvm-all.c
++++ b/accel/kvm/kvm-all.c
+@@ -2405,7 +2405,7 @@ int kvm_irqchip_send_msi(KVMState *s, MSIMessage msg)
+     msi.flags = 0;
+     memset(msi.pad, 0, sizeof(msi.pad));
+ 
+-    return kvm_vm_ioctl(s, KVM_SIGNAL_MSI, &msi);
++    return kvm_vm_plane_ioctl(s, msg.plane_id, KVM_SIGNAL_MSI, &msi);
+ }
+ 
+ int kvm_irqchip_add_msi_route(AccelRouteChange *c, int vector, PCIDevice *dev)
+diff --git a/hw/i386/kvm/apic.c b/hw/i386/kvm/apic.c
+index 82355f0463..4dd946d6f2 100644
+--- a/hw/i386/kvm/apic.c
++++ b/hw/i386/kvm/apic.c
+@@ -210,7 +210,11 @@ static uint64_t kvm_apic_mem_read(void *opaque, hwaddr addr,
+ static void kvm_apic_mem_write(void *opaque, hwaddr addr,
+                                uint64_t data, unsigned size)
+ {
+-    MSIMessage msg = { .address = addr, .data = data };
++    MSIMessage msg = {
++	    .address = addr,
++	    .data = data,
++	    .plane_id = qdev_default_plane(),
++    };
+ 
+     kvm_send_msi(&msg);
+ }
+diff --git a/hw/pci/msi.c b/hw/pci/msi.c
+index b9f5b45920..d0373131dd 100644
+--- a/hw/pci/msi.c
++++ b/hw/pci/msi.c
+@@ -142,6 +142,7 @@ static MSIMessage msi_prepare_message(PCIDevice *dev, unsigned int vector)
+     uint16_t flags = pci_get_word(dev->config + msi_flags_off(dev));
+     bool msi64bit = flags & PCI_MSI_FLAGS_64BIT;
+     unsigned int nr_vectors = msi_nr_vectors(flags);
++    DeviceState *dev_state= DEVICE(dev);
+     MSIMessage msg;
+ 
+     assert(vector < nr_vectors);
+@@ -159,6 +160,8 @@ static MSIMessage msi_prepare_message(PCIDevice *dev, unsigned int vector)
+         msg.data |= vector;
+     }
+ 
++    msg.plane_id =  dev_state->plane;
++
+     return msg;
+ }
+ 
+diff --git a/hw/pci/msix.c b/hw/pci/msix.c
+index 1b23eaf100..1773f8ecca 100644
+--- a/hw/pci/msix.c
++++ b/hw/pci/msix.c
+@@ -37,10 +37,13 @@
+ static MSIMessage msix_prepare_message(PCIDevice *dev, unsigned vector)
+ {
+     uint8_t *table_entry = dev->msix_table + vector * PCI_MSIX_ENTRY_SIZE;
++    DeviceState *dev_state= DEVICE(dev);
+     MSIMessage msg;
+ 
+     msg.address = pci_get_quad(table_entry + PCI_MSIX_ENTRY_LOWER_ADDR);
+     msg.data = pci_get_long(table_entry + PCI_MSIX_ENTRY_DATA);
++    msg.plane_id = dev_state->plane;
++
+     return msg;
+ }
+ 
+diff --git a/include/hw/pci/msi.h b/include/hw/pci/msi.h
+index abcfd13925..6bedf97b6f 100644
+--- a/include/hw/pci/msi.h
++++ b/include/hw/pci/msi.h
+@@ -26,6 +26,7 @@
+ struct MSIMessage {
+     uint64_t address;
+     uint32_t data;
++    uint8_t plane_id;
+ };
+ 
+ extern bool msi_nonbroken;
+-- 
+2.55.0
+

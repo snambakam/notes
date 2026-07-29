@@ -1,0 +1,100 @@
+From 0a71b91e09ce73c2661c9f2516d3672778999c83 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Thu, 5 Mar 2026 09:19:46 +0100
+Subject: [RFC PATCH v1 018/132] kvm: Move kvm_vcpu->rcuwait to
+ struct kvm_vcpu_common
+
+The rcuwait member is used to block and wake a VCPU thread. Since all
+plane VCPUs share a thread, there must only be a single wait object.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/mips/kvm/mips.c     | 4 ++--
+ include/linux/kvm_host.h | 9 +++++----
+ virt/kvm/kvm_main.c      | 7 ++++---
+ 3 files changed, 11 insertions(+), 9 deletions(-)
+
+diff --git a/arch/mips/kvm/mips.c b/arch/mips/kvm/mips.c
+index f928ba105104..6469ec246dd6 100644
+--- a/arch/mips/kvm/mips.c
++++ b/arch/mips/kvm/mips.c
+@@ -265,7 +265,7 @@ static enum hrtimer_restart kvm_mips_comparecount_wakeup(struct hrtimer *timer)
+ 	kvm_mips_callbacks->queue_timer_int(vcpu);
+ 
+ 	vcpu->arch.wait = 0;
+-	rcuwait_wake_up(&vcpu->wait);
++	rcuwait_wake_up(kvm_arch_vcpu_get_wait(vcpu));
+ 
+ 	return kvm_mips_count_timeout(vcpu);
+ }
+@@ -507,7 +507,7 @@ int kvm_vcpu_ioctl_interrupt(struct kvm_vcpu *vcpu,
+ 
+ 	dvcpu->arch.wait = 0;
+ 
+-	rcuwait_wake_up(&dvcpu->wait);
++	rcuwait_wake_up(kvm_arch_vcpu_get_wait(dvcpu));
+ 
+ 	return 0;
+ }
+diff --git a/include/linux/kvm_host.h b/include/linux/kvm_host.h
+index 3031eb63b4a9..1e118da4282f 100644
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -337,6 +337,10 @@ struct kvm_vcpu_common {
+ #endif
+ 	struct mutex mutex;
+ 
++#ifndef __KVM_HAVE_ARCH_WQP
++	struct rcuwait wait;
++#endif
++
+ 	/* Scheduling state */
+ #ifdef CONFIG_PREEMPT_NOTIFIERS
+ 	struct preempt_notifier preempt_notifier;
+@@ -361,9 +365,6 @@ struct kvm_vcpu {
+ 
+ 	struct kvm_run *run;
+ 
+-#ifndef __KVM_HAVE_ARCH_WQP
+-	struct rcuwait wait;
+-#endif
+ 	struct pid *pid;
+ 	rwlock_t pid_lock;
+ 	int sigset_active;
+@@ -1806,7 +1807,7 @@ static inline struct rcuwait *kvm_arch_vcpu_get_wait(struct kvm_vcpu *vcpu)
+ #ifdef __KVM_HAVE_ARCH_WQP
+ 	return vcpu->arch.waitp;
+ #else
+-	return &vcpu->wait;
++	return &vcpu->common->wait;
+ #endif
+ }
+ 
+diff --git a/virt/kvm/kvm_main.c b/virt/kvm/kvm_main.c
+index 2049d5731353..e72ef7f31daf 100644
+--- a/virt/kvm/kvm_main.c
++++ b/virt/kvm/kvm_main.c
+@@ -468,6 +468,10 @@ static int kvm_vcpu_init_common(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned
+ 
+ 	mutex_init(&common->mutex);
+ 
++#ifndef __KVM_HAVE_ARCH_WQP
++	rcuwait_init(&common->wait);
++#endif
++
+ 	common->kvm = kvm;
+ 	common->current_vcpu = vcpu;
+ 
+@@ -510,9 +514,6 @@ static void kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
+ 	vcpu->vcpu_id = id;
+ 	vcpu->pid = NULL;
+ 	rwlock_init(&vcpu->pid_lock);
+-#ifndef __KVM_HAVE_ARCH_WQP
+-	rcuwait_init(&vcpu->wait);
+-#endif
+ 	kvm_async_pf_vcpu_init(vcpu);
+ 
+ 	kvm_vcpu_set_in_spin_loop(vcpu, false);
+-- 
+2.55.0
+

@@ -1,0 +1,332 @@
+From 09e922f27fcccbcf70df867ba267c685991e0725 Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Tue, 1 Apr 2025 15:59:11 +0200
+Subject: [RFC PATCH v1 061/132] Documentation: kvm: introduce "VM
+ plane" concept
+
+There have been multiple occurrences of processors introducing a virtual
+privilege level concept for guests, where the hypervisor hosts multiple
+copies of a vCPU's register state (or at least of most of it) and provides
+hypercalls or instructions to switch between them.  These include AMD
+VMPLs, Intel TDX partitions, Microsoft Hyper-V VTLs, and ARM CCA planes.
+Include documentation on how the feature will be exposed to userspace,
+based on a draft made between Plumbers and KVM Forum.
+
+In the past, two main solutions that were attempted, mostly in the context
+of Hyper-V VTLs and SEV-SNP VMPLs:
+
+- use a single vCPU file descriptor, and store multiple copies of the state
+  in a single struct kvm_vcpu.  This requires a lot of changes to
+  provide multiple copies of affected fields, especially MMUs and APICs;
+  and complex uAPI extensions to direct existing ioctls to a specific
+  privilege level.  This solution looked marginally okay for SEV-SNP
+  VMPLs, but only because the copies of the register state were hidden
+  in the VMSA (KVM does not manage it); it showed all its problems when
+  applied to Hyper-V VTLs.
+
+- use multiple VM and vCPU file descriptors, and handle the switch entirely
+  in userspace.  This got gnarly pretty fast for even more reasons than
+  the previous case, for example because VMs could not share anymore
+  memslots, including dirty bitmaps and private/shared attributes (a
+  substantial problem for SEV-SNP since VMPLs share their ASID).  Another
+  problem was the need to share _some_ register state across VTLs and
+  to control that vCPUs did not run in parallel; there needed to be a
+  lot of logic to be added in userspace to ensure that higher-privileged
+  VTL properly interrupted a lower-privileged one.
+
+  This solution also complicates in-kernel implementation of privilege
+  level switch, or even makes it impossible, because there is no kernel
+  knowledge of the relationship between vCPUs that have the same id but
+  belong to different privilege levels.
+
+Especially given the need to accelerate switches in kernel, it is clear
+that KVM needs some level of knowledge of the relationship between vCPUs
+that have the same id but belong to different privilege levels.  For this
+reason, I proposed a design that only gives the initial set of VM and vCPU file
+descriptors the full set of ioctls + struct kvm_run; other privilege
+levels instead only support a small part of the KVM API.  In fact for
+the vm file descriptor it is only three ioctls: KVM_CHECK_EXTENSION,
+KVM_SIGNAL_MSI, KVM_SET_MEMORY_ATTRIBUTES.  For vCPUs it is basically
+KVM_GET/SET_*.
+
+This solves a lot of the problems in the multiple-file-descriptors solution,
+namely it gets for free the ability to avoid parallel execution of the
+same vCPUs in different privilege levels.  Changes to the userspace API
+of course exist, but they are relatively small and more easily backwards
+compatible, because they boil down to the introduction of new file
+descriptor kinds instead of having to change the inputs to all affected
+ioctls.
+
+It does share some of the code churn issues in the single-file-descriptor
+solution; on the other hand a prototype multi-fd VMPL implementation[1]
+also needed large scale changes which therefore seem unavoidable when
+privilege levels are provided by hardware, and not a software concept
+only as is the case for VTLs.
+hardware
+
+   [1] https://lore.kernel.org/lkml/cover.1726506534.git.roy.hopkins@suse.com/
+
+Acknowledgements: thanks to everyone who participated in the discussions,
+you are too many to mention in a small margin.  Thanks to Roy Hopkins,
+Tom Lendacky, Anel Orazgaliyeva, Nicolas Saenz-Julienne for experimenting
+with implementations of VTLs and VMPLs.
+
+Ah, and because x86 has three names for it and Arm has one, choose the
+Arm name for all architectures to avoid bikeshedding and to displease
+everyone---including the KVM/arm64 folks, probably.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+---
+ Documentation/virt/kvm/api.rst           | 173 +++++++++++++++++++++--
+ Documentation/virt/kvm/vcpu-requests.rst |   7 +
+ 2 files changed, 165 insertions(+), 15 deletions(-)
+
+diff --git a/Documentation/virt/kvm/api.rst b/Documentation/virt/kvm/api.rst
+index 6e6b35eafe5f..274e7d624521 100644
+--- a/Documentation/virt/kvm/api.rst
++++ b/Documentation/virt/kvm/api.rst
+@@ -281,7 +281,7 @@ otherwise.
+ 
+ :Capability: basic, KVM_CAP_CHECK_EXTENSION_VM for vm ioctl
+ :Architectures: all
+-:Type: system ioctl, vm ioctl
++:Type: system ioctl, vm ioctl (all planes)
+ :Parameters: extension identifier (KVM_CAP_*)
+ :Returns: 0 if unsupported; 1 (or some other positive integer) if supported
+ 
+@@ -6400,7 +6400,7 @@ Returns -EINVAL if called on a protected VM.
+ 
+ :Capability: KVM_CAP_MEMORY_ATTRIBUTES
+ :Architectures: x86
+-:Type: vm ioctl
++:Type: vm ioctl (all planes)
+ :Parameters: struct kvm_memory_attributes (in)
+ :Returns: 0 on success, <0 on error
+ 
+@@ -6588,6 +6588,46 @@ KVM_S390_KEYOP_SSKE
+   Sets the storage key for the guest address ``guest_addr`` to the key
+   specified in ``key``, returning the previous value in ``key``.
+ 
++.. _KVM_CREATE_PLANE:
++
++4.145 KVM_CREATE_PLANE
++----------------------
++
++:Capability: KVM_CAP_PLANES
++:Architectures: none
++:Type: vm ioctl
++:Parameters: plane id
++:Returns: a VM fd that can be used to control the new plane.
++
++Creates a new *plane*, i.e. a separate privilege level for the
++virtual machine.  Each plane has its own memory attributes,
++which can be used to enable more restricted permissions than
++what is allowed with ``KVM_SET_USER_MEMORY_REGION``.
++
++Each plane has a numeric id that is used when communicating
++with KVM through the :ref:`kvm_run <kvm_run>` struct.  While
++KVM is currently agnostic to whether low ids are more or less
++privileged, it is expected that this will not always be the
++case in the future.  For example KVM in the future may use
++the plane id when planes are supported by hardware (as is the
++case for VMPLs in AMD), or if KVM supports accelerated plane
++switch operations (as might be the case for Hyper-V VTLs).
++
++4.146 KVM_CREATE_VCPU_PLANE
++---------------------------
++
++:Capability: KVM_CAP_PLANES
++:Architectures: none
++:Type: vm ioctl (non default plane)
++:Parameters: vcpu file descriptor for the default plane
++:Returns: a vCPU fd that can be used to control the new plane
++          for the vCPU.
++
++Adds a vCPU to a plane; the new vCPU's id comes from the vCPU
++file descriptor that is passed in the argument.  Note that
++ because of how the API is defined, planes other than plane 0
++can only have a subset of the ids that are available in plane 0.
++
+ .. _kvm_run:
+ 
+ .. _KVM_CREATE_PLANE:
+@@ -6643,7 +6683,50 @@ This field is ignored if KVM_CAP_IMMEDIATE_EXIT is not available.
+ 
+ ::
+ 
+-	__u8 padding1[6];
++	/* in/out */
++	__u8 plane;
++
++The plane that will be run (usually 0).
++
++While this is not yet supported, in the future KVM may handle plane
++switch in the kernel.  In this case, the output value of this field
++may differ from the input value.  However, automatic switch will
++have to be :ref:`explicitly enabled <KVM_ENABLE_CAP>`.
++
++For backwards compatibility, this field is ignored unless a plane
++other than plane 0 has been created.
++
++::
++
++        /* in/out */
++        __u16 suspended_planes;
++
++A bitmap of planes whose execution was suspended to run a
++higher-privileged plane, usually via a hypercall or due to
++an interrupt in the higher-privileged plane.
++
++KVM right now does not use this field; it may be used in the future
++once KVM implements in-kernel plane switch mechanisms.  Until that
++is the case, userspace can leave this to zero.
++
++::
++
++	/* in */
++	__u16 req_exit_planes;
++
++A bitmap of planes for which KVM should exit when they have a pending
++interrupt.  In general, userspace should set bits corresponding to
++planes that are more privileged than ``plane``; because KVM is agnostic
++to whether low ids are more or less privileged, these could be the bits
++*above* or *below* ``plane``.  In some cases it may make sense to request
++an exit for all planes---for example, if the higher-priority plane
++wants to be informed about interrupts pending in lower-priority planes,
++userspace may need to learn about those as well.
++
++The bit at position ``plane`` is ignored; interrupts for the current
++plane are never delivered to userspace.
++
++::
+ 
+ 	/* out */
+ 	__u32 exit_reason;
+@@ -7439,6 +7522,44 @@ consisting of the following fields:
+ the ``KVM_EXIT_ARM_SEA_FLAG_GPA_VALID`` flag is set. Otherwise, the value of
+ ``gpa`` is unknown.
+ 
++::
++
++    /* KVM_EXIT_PLANE_EVENT */
++    struct {
++  #define KVM_PLANE_EVENT_INTERRUPT	1
++      __u16 cause;
++      __u16 pending_event_planes;
++      __u16 target;
++      __u16 padding;
++      __u32 flags;
++      __u64 extra;
++    } plane_event;
++
++Inform userspace of an event that affects a different plane than the
++currently executing one.
++
++On a ``KVM_EXIT_PLANE_EVENT`` exit, ``pending_event_planes`` is always
++set to the set of planes that have a pending interrupt.
++
++``cause`` provides the event that caused the exit, and the meaning of
++``target`` depends on the cause of the exit too.
++
++Right now the only defined cause is ``KVM_PLANE_EVENT_INTERRUPT``, i.e.
++an interrupt was received by a plane whose id is set in the
++``req_exit_planes`` bitmap.  In this case, ``target`` is the AND of
++``req_exit_planes`` and ``pending_event_planes``.
++
++``flags`` and ``extra`` are currently always 0.
++
++If userspace wants to switch to the target plane, it should move any
++shared state from the current plane to ``target``, and then invoke
++``KVM_RUN`` with ``kvm_run->plane`` set to ``target`` (and
++``req_exit_planes`` initialized accordingly).  Note that it's also
++valid to switch planes in response to other userspace exit codes, for
++example ``KVM_EXIT_X86_WRMSR`` or ``KVM_EXIT_HYPERCALL``.  Immediately
++after ``KVM_RUN`` is entered, KVM will check ``req_exit_planes`` and
++trigger a ``KVM_EXIT_PLANE_EVENT`` userspace exit if needed.
++
+ ::
+ 
+ 		/* Fix the size of the union. */
+@@ -8976,20 +9097,27 @@ helpful if user space wants to emulate instructions which are not
+ This capability can be enabled dynamically even if VCPUs were already
+ created and are running.
+ 
+-7.47 KVM_CAP_S390_HPAGE_2G
+---------------------------
++hpage_2g module parameter is not set to 1, -EINVAL is returned.
+ 
+-:Architectures: s390
+-:Parameters: none
+-:Returns: 0 on success; -EINVAL if hpage_2g module parameter was not set,
+-          cmma is enabled, or the VM has the KVM_VM_S390_UCONTROL
+-          flag set; -EBUSY if vCPUs were already created for the VM.
++7.47 KVM_CAP_PLANES_FPU
++-----------------------
+ 
+-With this capability the KVM support for memory backing with 2g pages
+-through hugetlbfs can be enabled for a VM. After the capability is
+-enabled, cmma can't be enabled anymore and pfmfi and the storage key
+-interpretation are disabled. If cmma has already been enabled or the
+-hpage_2g module parameter is not set to 1, -EINVAL is returned.
++:Architectures: x86
++:Parameters: arg[0] is 0 if each vCPU plane has a separate FPU,
++             1 if the FPU is shared
++:Type: vm
++
++When enabled, such as KVM_SET_XSAVE or KVM_SET_FPU *are* available for
++vCPU on all planes, but they will read and write the same data that is presented
++to other planes.  Note that KVM_GET/SET_XSAVE also allows access to some
++registers that are *not* part of FPU state; right now this is just PKRU.
++Those are never shared.
++
++KVM_CAP_PLANES_FPU is experimental; userspace must *not* assume that
++KVM_CAP_PLANES_FPU is present on x86 for *any* VM type and different
++VM types may or may not allow enabling KVM_CAP_PLANES_FPU.  Like for other
++capabilities, KVM_CAP_PLANES_FPU can be queried on the VM file descriptor;
++KVM_CHECK_EXTENSION returns 1 if it is possible to enable shared FPU mode.
+ 
+ 8. Other capabilities.
+ ======================
+@@ -9527,6 +9655,21 @@ KVM exits with the register state of either the L1 or L2 guest
+ depending on which executed at the time of an exit. Userspace must
+ take care to differentiate between these cases.
+ 
++8.46 KVM_CAP_PLANES
++-------------------
++
++:Capability: KVM_CAP_PLANES
++:Architectures: x86
++:Type: system, vm
++
++The capability returns the maximum plane id that can be passed to
++:ref:`KVM_CREATE_PLANE <KVM_CREATE_PLANE>`.  Because the maximum
++id can vary according to the machine type, it is recommended to
++check for this capability on the VM file descriptor.
++
++When called on the system file descriptor, KVM returns the highest
++value supported on any machine type.
++
+ 8.47 KVM_CAP_S390_VSIE_ESAMODE
+ ------------------------------
+ 
+diff --git a/Documentation/virt/kvm/vcpu-requests.rst b/Documentation/virt/kvm/vcpu-requests.rst
+index 06718b9bc959..86ac67b98a74 100644
+--- a/Documentation/virt/kvm/vcpu-requests.rst
++++ b/Documentation/virt/kvm/vcpu-requests.rst
+@@ -286,6 +286,13 @@ architecture dependent.  kvm_vcpu_block() calls kvm_arch_vcpu_runnable()
+ to check if it should awaken.  One reason to do so is to provide
+ architectures a function where requests may be checked if necessary.
+ 
++VM planes
++---------
++
++Each plane has its own set of requests.  Processing requests from
++another plane needs to go through a plane switch, for example via a
++`KVM_EXIT_PLANE_EVENT` userspace exit.
++
+ References
+ ==========
+ 
+-- 
+2.55.0
+

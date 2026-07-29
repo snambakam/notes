@@ -1,0 +1,78 @@
+From 50880cc04cec45a248c787658945b315575da812 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Fri, 17 Apr 2026 11:58:21 +0000
+Subject: [RFC PATCH v1 046/132] kvm: x86: Share MTRR state across
+ planes
+
+Share the MTRR state across all planes of a given VCPU index.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/x86/include/asm/kvm_host.h |  3 ++-
+ arch/x86/kvm/mtrr.c             | 12 +++++++-----
+ 2 files changed, 9 insertions(+), 6 deletions(-)
+
+diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
+index 425cc293d44f..a0bbc71d1bf5 100644
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -837,6 +837,8 @@ struct kvm_vcpu_arch_common {
+ 	 */
+ 	u32 cpu_caps[NR_KVM_CPU_CAPS];
+ 
++	/* Cache configuration state */
++	struct kvm_mtrr mtrr_state;
+ };
+ 
+ int kvm_arch_vcpu_common_init(struct kvm_vcpu_common *common);
+@@ -1017,7 +1019,6 @@ struct kvm_vcpu_arch {
+ 	bool smi_pending;    /* SMI queued after currently running handler */
+ 	u8 handling_intr_from_guest;
+ 
+-	struct kvm_mtrr mtrr_state;
+ 	u64 pat;
+ 
+ 	unsigned switch_db_regs;
+diff --git a/arch/x86/kvm/mtrr.c b/arch/x86/kvm/mtrr.c
+index 6f74e2b27c1e..610ff975e022 100644
+--- a/arch/x86/kvm/mtrr.c
++++ b/arch/x86/kvm/mtrr.c
+@@ -23,18 +23,20 @@
+ 
+ static u64 *find_mtrr(struct kvm_vcpu *vcpu, unsigned int msr)
+ {
++	struct kvm_vcpu_common *common = vcpu->common;
++
+ 	int index;
+ 
+ 	switch (msr) {
+ 	case MTRRphysBase_MSR(0) ... MTRRphysMask_MSR(KVM_NR_VAR_MTRR - 1):
+ 		index = msr - MTRRphysBase_MSR(0);
+-		return &vcpu->arch.mtrr_state.var[index];
++		return &common->arch.mtrr_state.var[index];
+ 	case MSR_MTRRfix64K_00000:
+-		return &vcpu->arch.mtrr_state.fixed_64k;
++		return &common->arch.mtrr_state.fixed_64k;
+ 	case MSR_MTRRfix16K_80000:
+ 	case MSR_MTRRfix16K_A0000:
+ 		index = msr - MSR_MTRRfix16K_80000;
+-		return &vcpu->arch.mtrr_state.fixed_16k[index];
++		return &common->arch.mtrr_state.fixed_16k[index];
+ 	case MSR_MTRRfix4K_C0000:
+ 	case MSR_MTRRfix4K_C8000:
+ 	case MSR_MTRRfix4K_D0000:
+@@ -44,9 +46,9 @@ static u64 *find_mtrr(struct kvm_vcpu *vcpu, unsigned int msr)
+ 	case MSR_MTRRfix4K_F0000:
+ 	case MSR_MTRRfix4K_F8000:
+ 		index = msr - MSR_MTRRfix4K_C0000;
+-		return &vcpu->arch.mtrr_state.fixed_4k[index];
++		return &common->arch.mtrr_state.fixed_4k[index];
+ 	case MSR_MTRRdefType:
+-		return &vcpu->arch.mtrr_state.deftype;
++		return &common->arch.mtrr_state.deftype;
+ 	default:
+ 		break;
+ 	}
+-- 
+2.55.0
+

@@ -1,0 +1,108 @@
+From e19866977107744dfb42011c65faf057cbea8f17 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Thu, 16 Apr 2026 14:23:53 +0000
+Subject: [RFC PATCH v1 036/132] kvm: Add plane_level to
+ kvm_kernel_irq_routing_entry
+
+Track the target plane-level of MSI irqs in struct
+kvm_kernel_irq_routing_entry. This will be used to send MSI IRQs to
+the right plane-level once planes are supported.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/arm64/kvm/vgic/vgic-irqfd.c | 1 +
+ arch/loongarch/kvm/irqfd.c       | 1 +
+ arch/powerpc/kvm/mpic.c          | 1 +
+ arch/riscv/kvm/vm.c              | 1 +
+ arch/x86/kvm/irq.c               | 1 +
+ include/linux/kvm_host.h         | 1 +
+ virt/kvm/irqchip.c               | 1 +
+ 7 files changed, 7 insertions(+)
+
+diff --git a/arch/arm64/kvm/vgic/vgic-irqfd.c b/arch/arm64/kvm/vgic/vgic-irqfd.c
+index 19a1094536e6..5bd2b14fa4e0 100644
+--- a/arch/arm64/kvm/vgic/vgic-irqfd.c
++++ b/arch/arm64/kvm/vgic/vgic-irqfd.c
+@@ -63,6 +63,7 @@ int kvm_set_routing_entry(struct kvm *kvm,
+ 		e->msi.data = ue->u.msi.data;
+ 		e->msi.flags = ue->flags;
+ 		e->msi.devid = ue->u.msi.devid;
++		e->msi.plane_level = 0;
+ 		break;
+ 	default:
+ 		goto out;
+diff --git a/arch/loongarch/kvm/irqfd.c b/arch/loongarch/kvm/irqfd.c
+index 40ed1081c4b6..0d84d997ec4f 100644
+--- a/arch/loongarch/kvm/irqfd.c
++++ b/arch/loongarch/kvm/irqfd.c
+@@ -61,6 +61,7 @@ int kvm_set_routing_entry(struct kvm *kvm,
+ 		e->msi.address_lo = ue->u.msi.address_lo;
+ 		e->msi.address_hi = ue->u.msi.address_hi;
+ 		e->msi.data = ue->u.msi.data;
++		e->msi.plane_level = 0;
+ 		return 0;
+ 	default:
+ 		return -EINVAL;
+diff --git a/arch/powerpc/kvm/mpic.c b/arch/powerpc/kvm/mpic.c
+index 3070f36d9fb8..0f568f5fff8b 100644
+--- a/arch/powerpc/kvm/mpic.c
++++ b/arch/powerpc/kvm/mpic.c
+@@ -1841,6 +1841,7 @@ int kvm_set_routing_entry(struct kvm *kvm,
+ 		e->msi.address_lo = ue->u.msi.address_lo;
+ 		e->msi.address_hi = ue->u.msi.address_hi;
+ 		e->msi.data = ue->u.msi.data;
++		e->msi.plane_level = 0;
+ 		break;
+ 	default:
+ 		goto out;
+diff --git a/arch/riscv/kvm/vm.c b/arch/riscv/kvm/vm.c
+index a9f083feeb76..f518247e699b 100644
+--- a/arch/riscv/kvm/vm.c
++++ b/arch/riscv/kvm/vm.c
+@@ -138,6 +138,7 @@ int kvm_set_routing_entry(struct kvm *kvm,
+ 		e->msi.data = ue->u.msi.data;
+ 		e->msi.flags = ue->flags;
+ 		e->msi.devid = ue->u.msi.devid;
++		e->msi.plane_level = 0;
+ 		break;
+ 	default:
+ 		goto out;
+diff --git a/arch/x86/kvm/irq.c b/arch/x86/kvm/irq.c
+index cb8ac4b9b0d7..68d43329b82d 100644
+--- a/arch/x86/kvm/irq.c
++++ b/arch/x86/kvm/irq.c
+@@ -332,6 +332,7 @@ int kvm_set_routing_entry(struct kvm *kvm,
+ 		e->msi.address_lo = ue->u.msi.address_lo;
+ 		e->msi.address_hi = ue->u.msi.address_hi;
+ 		e->msi.data = ue->u.msi.data;
++		e->msi.plane_level = 0;
+ 
+ 		if (kvm_msi_route_invalid(kvm, e))
+ 			return -EINVAL;
+diff --git a/include/linux/kvm_host.h b/include/linux/kvm_host.h
+index 117930081dff..4177e3e1fe5c 100644
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -782,6 +782,7 @@ struct kvm_kernel_irq_routing_entry {
+ 			u32 data;
+ 			u32 flags;
+ 			u32 devid;
++			unsigned plane_level;
+ 		} msi;
+ 		struct kvm_s390_adapter_int adapter;
+ 		struct kvm_hv_sint hv_sint;
+diff --git a/virt/kvm/irqchip.c b/virt/kvm/irqchip.c
+index 462c70621247..ae47e56176f1 100644
+--- a/virt/kvm/irqchip.c
++++ b/virt/kvm/irqchip.c
+@@ -57,6 +57,7 @@ int kvm_send_userspace_msi(struct kvm *kvm, struct kvm_msi *msi)
+ 	route.msi.data = msi->data;
+ 	route.msi.flags = msi->flags;
+ 	route.msi.devid = msi->devid;
++	route.msi.plane_level = 0;
+ 
+ 	return kvm_set_msi(&route, kvm, KVM_USERSPACE_IRQ_SOURCE_ID, 1, false);
+ }
+-- 
+2.55.0
+

@@ -1,0 +1,60 @@
+From 8f99cae65a3648fde3bad969ffb7fef78cbe50d4 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Fri, 17 Apr 2026 11:30:43 +0000
+Subject: [RFC PATCH v1 045/132] kvm: x86: Update state for all
+ plane VCPUs after CPUID update
+
+Make sure to update CPUID dependent state for all VCPUs of a given
+plane when CPUID state is updated.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/x86/kvm/cpuid.c | 16 +++++++++++-----
+ 1 file changed, 11 insertions(+), 5 deletions(-)
+
+diff --git a/arch/x86/kvm/cpuid.c b/arch/x86/kvm/cpuid.c
+index b29a644028af..7b8cd379ba9f 100644
+--- a/arch/x86/kvm/cpuid.c
++++ b/arch/x86/kvm/cpuid.c
+@@ -513,6 +513,8 @@ static int kvm_set_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid_entry2 *e2,
+ {
+ 	struct kvm_vcpu_common *common = vcpu->common;
+ 	u32 vcpu_caps[NR_KVM_CPU_CAPS];
++	struct kvm_vcpu *v;
++	unsigned i;
+ 	int r;
+ 
+ 	/*
+@@ -562,9 +564,11 @@ static int kvm_set_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid_entry2 *e2,
+ 
+ #ifdef CONFIG_KVM_HYPERV
+ 	if (kvm_cpuid_has_hyperv(vcpu)) {
+-		r = kvm_hv_vcpu_init(vcpu);
+-		if (r)
+-			goto err;
++		vcpu_for_each_plane(common, i, v) {
++			r = kvm_hv_vcpu_init(vcpu);
++			if (r)
++				goto err;
++		}
+ 	}
+ #endif
+ 
+@@ -572,10 +576,12 @@ static int kvm_set_cpuid(struct kvm_vcpu *vcpu, struct kvm_cpuid_entry2 *e2,
+ 	if (r)
+ 		goto err;
+ 
++	vcpu_for_each_plane(vcpu->common, i, v) {
+ #ifdef CONFIG_KVM_XEN
+-	vcpu->arch.xen.cpuid = kvm_get_hypervisor_cpuid(vcpu, XEN_SIGNATURE);
++		v->arch.xen.cpuid = kvm_get_hypervisor_cpuid(vcpu, XEN_SIGNATURE);
+ #endif
+-	kvm_vcpu_after_set_cpuid(vcpu);
++		kvm_vcpu_after_set_cpuid(v);
++	}
+ 
+ success:
+ 	kvfree(e2);
+-- 
+2.55.0
+

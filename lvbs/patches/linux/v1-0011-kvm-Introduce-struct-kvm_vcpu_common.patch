@@ -1,0 +1,125 @@
+From e95802c61a266f1cf3faf5b70a1428b1778e2d75 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Wed, 4 Mar 2026 11:29:27 +0100
+Subject: [RFC PATCH v1 011/132] kvm: Introduce struct
+ kvm_vcpu_common
+
+When creating one VCPU object per plane there is still a lot of VCPU
+state which needes to be shared across all planes. Create struct
+kvm_vcpu_common as a container for this shared state.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ include/linux/kvm_host.h | 10 ++++++++++
+ virt/kvm/kvm_main.c      | 34 +++++++++++++++++++++++++++++++++-
+ 2 files changed, 43 insertions(+), 1 deletion(-)
+
+diff --git a/include/linux/kvm_host.h b/include/linux/kvm_host.h
+index 01b1c9407825..fbface6a82ef 100644
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -322,6 +322,13 @@ struct kvm_mmio_fragment {
+ 	unsigned int len;
+ };
+ 
++struct kvm_vcpu_common {
++	struct kvm *kvm;
++
++	/* Currently active VCPU */
++	struct kvm_vcpu *current_vcpu;
++};
++
+ struct kvm_vcpu {
+ 	struct kvm *kvm;
+ 	struct kvm_plane *plane;
+@@ -400,6 +407,9 @@ struct kvm_vcpu {
+ 	 */
+ 	struct kvm_memory_slot *last_used_slot;
+ 	u64 last_used_slot_gen;
++
++	struct kvm_vcpu_common *common;
++	unsigned plane_level;
+ };
+ 
+ /*
+diff --git a/virt/kvm/kvm_main.c b/virt/kvm/kvm_main.c
+index f7ad40f2d442..691b33620597 100644
+--- a/virt/kvm/kvm_main.c
++++ b/virt/kvm/kvm_main.c
+@@ -438,6 +438,20 @@ void *kvm_mmu_memory_cache_alloc(struct kvm_mmu_memory_cache *mc)
+ }
+ #endif
+ 
++static int kvm_vcpu_init_common(struct kvm_vcpu *vcpu, struct kvm *kvm)
++{
++	struct kvm_vcpu_common *common = kzalloc(sizeof(*common), GFP_KERNEL_ACCOUNT);
++
++	if (common == NULL)
++		return -ENOMEM;
++
++	common->kvm = kvm;
++	common->current_vcpu = vcpu;
++	vcpu->common = common;
++
++	return 0;
++}
++
+ static void kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
+ {
+ 	mutex_init(&vcpu->mutex);
+@@ -459,14 +473,26 @@ static void kvm_vcpu_init(struct kvm_vcpu *vcpu, struct kvm *kvm, unsigned id)
+ 	preempt_notifier_init(&vcpu->preempt_notifier, &kvm_preempt_ops);
+ 	vcpu->last_used_slot = NULL;
+ 
++	vcpu->plane_level = 0;
++
+ 	/* Fill the stats id string for the vcpu */
+ 	snprintf(vcpu->stats_id, sizeof(vcpu->stats_id), "kvm-%d/vcpu-%d",
+ 		 task_pid_nr(current), id);
+ }
+ 
++static void kvm_vcpu_common_destroy(struct kvm_vcpu *vcpu)
++{
++	if (vcpu->plane_level == 0)
++		kfree(vcpu->common);
++
++	vcpu->common = NULL;
++}
++
+ static void kvm_vcpu_destroy(struct kvm_vcpu *vcpu)
+ {
+ 	kvm_arch_vcpu_destroy(vcpu);
++
++	kvm_vcpu_common_destroy(vcpu);
+ 	kvm_dirty_ring_free(&vcpu->dirty_ring);
+ 
+ 	/*
+@@ -4246,11 +4272,15 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
+ 		goto vcpu_decrement;
+ 	}
+ 
++	r = kvm_vcpu_init_common(vcpu, kvm);
++	if (r)
++		goto vcpu_free;
++
+ 	BUILD_BUG_ON(sizeof(struct kvm_run) > PAGE_SIZE);
+ 	page = alloc_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO);
+ 	if (!page) {
+ 		r = -ENOMEM;
+-		goto vcpu_free;
++		goto vcpu_free_common;
+ 	}
+ 	vcpu->run = page_address(page);
+ 
+@@ -4318,6 +4348,8 @@ static int kvm_vm_ioctl_create_vcpu(struct kvm *kvm, unsigned long id)
+ 	kvm_arch_vcpu_destroy(vcpu);
+ vcpu_free_run_page:
+ 	free_page((unsigned long)vcpu->run);
++vcpu_free_common:
++	kvm_vcpu_common_destroy(vcpu);
+ vcpu_free:
+ 	kmem_cache_free(kvm_vcpu_cache, vcpu);
+ vcpu_decrement:
+-- 
+2.55.0
+

@@ -1,0 +1,93 @@
+From b906911abbec421ce6337693d912429951ddde3f Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Tue, 1 Apr 2025 14:23:53 +0200
+Subject: [RFC PATCH v1 076/132] KVM: x86: handle interrupt
+ priorities for planes
+
+Force a userspace exit if an interrupt is delivered to a higher-priority
+plane, where priority is represented by vcpu->run->req_exit_planes.
+The set of planes with pending IRR are manipulated atomically and stored
+in the plane-0 vCPU, since it is handy to reach from the target vCPU.
+
+TODO: haven't put much thought into IPI virtualization.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+---
+ arch/x86/include/asm/kvm_host.h |  6 ++++++
+ arch/x86/kvm/lapic.c            | 36 +++++++++++++++++++++++++++++++--
+ 2 files changed, 40 insertions(+), 2 deletions(-)
+
+diff --git a/arch/x86/include/asm/kvm_host.h b/arch/x86/include/asm/kvm_host.h
+index e882fa8921a2..ced7c1572a69 100644
+--- a/arch/x86/include/asm/kvm_host.h
++++ b/arch/x86/include/asm/kvm_host.h
+@@ -947,6 +947,12 @@ struct kvm_vcpu_arch {
+ 	u64 ia32_xss;
+ 	u64 guest_supported_xss;
+ 
++	/*
++	 * Only valid in plane0.  The bitmask of planes that received
++	 * an interrupt, to be checked against req_exit_planes.
++	 */
++	atomic_t irr_pending_planes;
++
+ 	struct kvm_pio_request pio;
+ 	void *pio_data;
+ 	void *sev_pio_data;
+diff --git a/arch/x86/kvm/lapic.c b/arch/x86/kvm/lapic.c
+index f3916dda17f7..4cca1ea6a16e 100644
+--- a/arch/x86/kvm/lapic.c
++++ b/arch/x86/kvm/lapic.c
+@@ -1396,6 +1396,39 @@ int __kvm_irq_delivery_to_apic(struct kvm_plane *plane, struct kvm_lapic *src,
+ 	return r;
+ }
+ 
++static void kvm_lapic_deliver_interrupt(struct kvm_vcpu *vcpu, struct kvm_lapic *apic,
++					int delivery_mode, int trig_mode, int vector)
++{
++	struct kvm_vcpu *plane0_vcpu = vcpu->plane0;
++	struct kvm_plane *running_plane;
++	u16 req_exit_planes;
++
++	kvm_x86_call(deliver_interrupt)(apic, delivery_mode, trig_mode, vector);
++
++	/*
++	 * test_and_set_bit implies a memory barrier, so IRR is written before
++	 * reading irr_pending_planes below...
++	 */
++	if (!test_and_set_bit(vcpu->plane, &plane0_vcpu->arch.irr_pending_planes)) {
++		/*
++		 * ... and also running_plane and req_exit_planes are read after writing
++		 * irr_pending_planes.  Both barriers pair with kvm_arch_vcpu_ioctl_run().
++		 */
++		smp_mb__after_atomic();
++
++		running_plane = READ_ONCE(plane0_vcpu->running_plane);
++		if (!running_plane)
++			return;
++
++		req_exit_planes = READ_ONCE(plane0_vcpu->req_exit_planes);
++		if (!(req_exit_planes & BIT(vcpu->plane)))
++			return;
++
++		kvm_make_request(KVM_REQ_PLANE_INTERRUPT,
++				 kvm_get_plane_vcpu(running_plane, vcpu->vcpu_id));
++	}
++}
++
+ /*
+  * Add a pending IRQ into lapic.
+  * Return 1 if successfully added and 0 if discarded.
+@@ -1437,8 +1470,7 @@ static int __apic_accept_irq(struct kvm_lapic *apic, int delivery_mode,
+ 				apic_clear_vector(vector, apic->regs + APIC_TMR);
+ 		}
+ 
+-		kvm_x86_call(deliver_interrupt)(apic, delivery_mode,
+-						trig_mode, vector);
++		kvm_lapic_deliver_interrupt(vcpu, apic, delivery_mode, trig_mode, vector);
+ 		break;
+ 
+ 	case APIC_DM_REMRD:
+-- 
+2.55.0
+

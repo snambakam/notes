@@ -1,0 +1,33 @@
+From da2865abbebfa35e653278ed751c97433200ddce Mon Sep 17 00:00:00 2001
+From: Tom Lendacky <thomas.lendacky@amd.com>
+Date: Wed, 28 May 2025 08:22:17 -0500
+Subject: [RFC PATCH v1 113/132] kvm: svm: Implement max_planes x86
+ operation
+
+Report the number of VMPL levels supported by SEV-SNP guests.
+
+Signed-off-by: Tom Lendacky <thomas.lendacky@amd.com>
+Co-developed-by: Joerg Roedel <joerg.roedel@amd.com>
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/x86/kvm/svm/svm.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/x86/kvm/svm/svm.c b/arch/x86/kvm/svm/svm.c
+index bc281fbc54c2..73d80f442a49 100644
+--- a/arch/x86/kvm/svm/svm.c
++++ b/arch/x86/kvm/svm/svm.c
+@@ -5383,8 +5383,10 @@ static void svm_free_plane(struct kvm_plane *plane)
+ 
+ static unsigned svm_max_planes(struct kvm *kvm)
+ {
++#ifdef CONFIG_KVM_AMD_SEV
+ 	if (____sev_snp_guest(kvm))
+ 		return sev_snp_max_planes(kvm);
++#endif
+ 
+ 	return kvm_x86_default_max_planes(kvm);
+ }
+-- 
+2.55.0
+

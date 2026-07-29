@@ -1,0 +1,118 @@
+From 97a7af6e57f0864cb9f6e8845802603da6038903 Mon Sep 17 00:00:00 2001
+From: Melody Wang <huibo.wang@amd.com>
+Date: Fri, 24 Apr 2026 17:42:08 +0000
+Subject: [RFC PATCH v1 004/132] KVM: SVM: Inject NMIs when
+ Restricted Injection is active
+
+When Restricted Injection is active, only #HV exceptions can be injected
+into the SEV-SNP guest.
+
+Detect that, and then follow the #HV doorbell communication from the GHCB
+specification to inject NMIs.
+
+Co-developed-by: Thomas Lendacky <thomas.lendacky@amd.com>
+Signed-off-by: Thomas Lendacky <thomas.lendacky@amd.com>
+Signed-off-by: Melody Wang <huibo.wang@amd.com>
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/x86/kvm/svm/sev.c | 19 ++++++++++++++++---
+ arch/x86/kvm/svm/svm.c |  8 ++++++++
+ arch/x86/kvm/svm/svm.h |  1 +
+ 3 files changed, 25 insertions(+), 3 deletions(-)
+
+diff --git a/arch/x86/kvm/svm/sev.c b/arch/x86/kvm/svm/sev.c
+index 16521a3505c6..0af3f9f07dd9 100644
+--- a/arch/x86/kvm/svm/sev.c
++++ b/arch/x86/kvm/svm/sev.c
+@@ -5403,7 +5403,10 @@ static void __sev_snp_inject(enum inject_type type, struct kvm_vcpu *vcpu)
+ 		return;
+ 	}
+ 
+-	hvdb->events.vector = vcpu->arch.interrupt.nr;
++	if (type == INJECT_NMI)
++		hvdb->events.nmi = 1;
++	else
++		hvdb->events.vector = vcpu->arch.interrupt.nr;
+ 
+ 	prepare_hv_injection(svm, hvdb);
+ 
+@@ -5483,10 +5486,17 @@ void sev_snp_cancel_injection(struct kvm_vcpu *vcpu)
+ 	/* Copy info back into event_inj field (replaces #HV) */
+ 	svm->vmcb->control.event_inj = SVM_EVTINJ_VALID;
+ 
++	/*
++	 * KVM only injects a single event each time (prepare_hv_injection),
++	 * so when events.nmi is true, the vector will be zero
++	 */
+ 	if (hvdb->events.vector)
+ 		svm->vmcb->control.event_inj |= hvdb->events.vector |
+ 						SVM_EVTINJ_TYPE_INTR;
+ 
++	if (hvdb->events.nmi)
++		svm->vmcb->control.event_inj |= SVM_EVTINJ_TYPE_NMI;
++
+ 	hvdb->events.pending_events = 0;
+ 
+ out:
+@@ -5512,8 +5522,11 @@ bool sev_snp_blocked(enum inject_type type, struct kvm_vcpu *vcpu)
+ 	if (!hvdb)
+ 		return true;
+ 
+-	/* Indicate interrupts blocked based on guest acknowledgment */
+-	blocked = !!hvdb->events.vector;
++	/* Indicate NMIs and interrupts blocked based on guest acknowledgment */
++	if (type == INJECT_NMI)
++		blocked = hvdb->events.nmi;
++	else
++		blocked = !!hvdb->events.vector;
+ 
+ 	unmap_hvdb(vcpu, &hvdb_map);
+ 
+diff --git a/arch/x86/kvm/svm/svm.c b/arch/x86/kvm/svm/svm.c
+index a41723f75c31..edc0c9ee4e4b 100644
+--- a/arch/x86/kvm/svm/svm.c
++++ b/arch/x86/kvm/svm/svm.c
+@@ -3784,6 +3784,9 @@ static void svm_inject_nmi(struct kvm_vcpu *vcpu)
+ {
+ 	struct vcpu_svm *svm = to_svm(vcpu);
+ 
++	if (sev_snp_inject(INJECT_NMI, vcpu))
++		goto status;
++
+ 	svm->vmcb->control.event_inj = SVM_EVTINJ_VALID | SVM_EVTINJ_TYPE_NMI;
+ 
+ 	if (svm->nmi_l1_to_l2)
+@@ -3798,6 +3801,8 @@ static void svm_inject_nmi(struct kvm_vcpu *vcpu)
+ 		svm->nmi_masked = true;
+ 		svm_set_iret_intercept(svm);
+ 	}
++
++status:
+ 	++vcpu->stat.nmi_injections;
+ }
+ 
+@@ -4014,6 +4019,9 @@ bool svm_nmi_blocked(struct kvm_vcpu *vcpu)
+ 	if (!gif_set(svm))
+ 		return true;
+ 
++	if (sev_snp_is_rinj_active(vcpu))
++		return sev_snp_blocked(INJECT_NMI, vcpu);
++
+ 	if (is_guest_mode(vcpu) && nested_exit_on_nmi(svm))
+ 		return false;
+ 
+diff --git a/arch/x86/kvm/svm/svm.h b/arch/x86/kvm/svm/svm.h
+index 29576f6c6bb1..94f612eeacfa 100644
+--- a/arch/x86/kvm/svm/svm.h
++++ b/arch/x86/kvm/svm/svm.h
+@@ -60,6 +60,7 @@ extern struct kvm_x86_ops svm_x86_ops __initdata;
+ 
+ enum inject_type {
+ 	INJECT_IRQ,
++	INJECT_NMI,
+ };
+ 
+ /*
+-- 
+2.55.0
+

@@ -1,0 +1,44 @@
+From 2b1974b57f8ddb4d9b3cca2d7e682a76b5b963c4 Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Thu, 16 Apr 2026 12:27:19 +0000
+Subject: [RFC PATCH v1 109/132] kvm: x86: Make local APIC code
+ aware of planes
+
+Make the local apic code aware of planes and only operate on APICs
+within the same plane level.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Co-developed-by: Joerg Roedel <joerg.roedel@amd.com>
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/x86/kvm/hyperv.c | 1 +
+ arch/x86/kvm/xen.c    | 1 +
+ 2 files changed, 2 insertions(+)
+
+diff --git a/arch/x86/kvm/hyperv.c b/arch/x86/kvm/hyperv.c
+index ee6b32d2a5cb..8ef09b8125b7 100644
+--- a/arch/x86/kvm/hyperv.c
++++ b/arch/x86/kvm/hyperv.c
+@@ -491,6 +491,7 @@ static int synic_set_irq(struct kvm_vcpu_hv_synic *synic, u32 sint)
+ 	irq.delivery_mode = APIC_DM_FIXED;
+ 	irq.vector = vector;
+ 	irq.level = 1;
++
+ 	ret = kvm_irq_delivery_to_apic(vcpu->plane, vcpu->arch.apic, &irq);
+ 	trace_kvm_hv_synic_set_irq(vcpu->vcpu_id, sint, irq.vector, ret);
+ 	return ret;
+diff --git a/arch/x86/kvm/xen.c b/arch/x86/kvm/xen.c
+index 4527f04c6617..399406752108 100644
+--- a/arch/x86/kvm/xen.c
++++ b/arch/x86/kvm/xen.c
+@@ -625,6 +625,7 @@ void kvm_xen_inject_vcpu_vector(struct kvm_vcpu *v)
+ 	irq.shorthand = APIC_DEST_NOSHORT;
+ 	irq.delivery_mode = APIC_DM_FIXED;
+ 	irq.level = 1;
++
+ 	kvm_irq_delivery_to_apic(v->plane, NULL, &irq);
+ }
+ 
+-- 
+2.55.0
+

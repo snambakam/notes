@@ -1,0 +1,34 @@
+From c13a9205d126b92a8dd716e9176c17ca71b2a162 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Tue, 28 Apr 2026 09:29:22 +0000
+Subject: [RFC PATCH v1 110/132] kvm: x86: Select a plane to run
+
+In the KVM_RUN path, select a runnable VCPU plane and use it to enter
+the guest. Also handle KVM_REQ_PLANE_RESCHED events to switch planes
+without exiting to user-space.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/x86/kvm/x86.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index bd4b67cfe44c..1685cdf975a4 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -11413,6 +11413,12 @@ static int vcpu_enter_guest(struct kvm_vcpu *vcpu)
+ 				goto out;
+ 			}
+ 		}
++
++		if (kvm_check_request(KVM_REQ_PLANE_RESCHED, vcpu)) {
++			vcpu->common->plane_switch = true;
++			r = 0;
++			goto out;
++		}
+ 	}
+ 
+ 	if (kvm_check_plane0_events(vcpu)) {
+-- 
+2.55.0
+

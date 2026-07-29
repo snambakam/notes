@@ -1,0 +1,55 @@
+From 12bd5b8f103ba0910f63e8d46c22d96e3af3f213 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Mon, 4 May 2026 13:33:17 +0000
+Subject: [RFC PATCH v1 111/132] kvm: x86: Allow hardware backend to
+ overwrite struct kvm_plane allocation
+
+Allow the hardware backend implementations to allocate the struct
+kvm_plane instances so that they can carry hardware specific
+information along them.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/x86/kvm/x86.c | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index 1685cdf975a4..be1796dc2eab 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -517,18 +517,30 @@ void kvm_free_plane(struct kvm_plane *plane)
+ 	kvm_x86_call(free_plane)(plane);
+ }
+ 
+-struct kvm_plane *kvm_alloc_plane(void)
++struct kvm_plane *x86_alloc_plane(void)
+ {
+ 	/* For better type checking, do not return kzalloc() value directly */
+ 	struct kvm_plane *plane = kzalloc(sizeof(*plane), GFP_KERNEL_ACCOUNT);
+ 
+ 	return plane;
+ }
++EXPORT_SYMBOL_FOR_KVM_INTERNAL(x86_alloc_plane);
+ 
+-void kvm_free_plane(struct kvm_plane *plane)
++void x86_free_plane(struct kvm_plane *plane)
+ {
+ 	kfree(plane);
+ }
++EXPORT_SYMBOL_FOR_KVM_INTERNAL(x86_free_plane);
++
++struct kvm_plane *kvm_alloc_plane(void)
++{
++	return kvm_x86_call(alloc_plane)();
++}
++
++void kvm_free_plane(struct kvm_plane *plane)
++{
++	kvm_x86_call(free_plane)(plane);
++}
+ 
+ /*
+  * All feature MSRs except uCode revID, which tracks the currently loaded uCode
+-- 
+2.55.0
+

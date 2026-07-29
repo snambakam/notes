@@ -1,0 +1,42 @@
+From 1439d123d8f7df6ec0f2862dd71a4207b4c49ab9 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Mon, 4 May 2026 13:08:57 +0000
+Subject: [RFC PATCH v1 107/132] kvm: Allocate struct kvm_plane in
+ architecture code
+
+Move plane allocation to architecture code so that per-arch
+implementations can embed the structure into another one for keeping
+additional data.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/x86/kvm/x86.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index 00dcdd0e22a4..3aec4e44b2b4 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -517,6 +517,19 @@ void kvm_free_plane(struct kvm_plane *plane)
+ 	kvm_x86_call(free_plane)(plane);
+ }
+ 
++struct kvm_plane *kvm_alloc_plane(void)
++{
++	/* For better type checking, do not return kzalloc() value directly */
++	struct kvm_plane *plane = kzalloc(sizeof(*plane), GFP_KERNEL_ACCOUNT);
++
++	return plane;
++}
++
++void kvm_free_plane(struct kvm_plane *plane)
++{
++	kfree(plane);
++}
++
+ /*
+  * All feature MSRs except uCode revID, which tracks the currently loaded uCode
+  * patch, are immutable once the vCPU model is defined.
+-- 
+2.55.0
+

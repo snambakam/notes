@@ -1,0 +1,31 @@
+From e6e4379dd0e3cabcedbece13c0e6db066f2b8979 Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Wed, 4 Mar 2026 09:26:24 +0100
+Subject: [RFC PATCH v1 104/132] kvm: Move vcpu_array to struct
+ kvm_plane
+
+Each plane will have its own set of VCPUs, so move the vcpu_array to
+the plane structure.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Co-developed-by: Joerg Roedel <joerg.roedel@amd.com>
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ virt/kvm/kvm_main.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/virt/kvm/kvm_main.c b/virt/kvm/kvm_main.c
+index 8d94c7020140..2052570966c9 100644
+--- a/virt/kvm/kvm_main.c
++++ b/virt/kvm/kvm_main.c
+@@ -1237,6 +1237,7 @@ static struct kvm_plane *kvm_create_plane(struct kvm *kvm, unsigned plane_level)
+ 	if (kvm_arch_plane_init(kvm, plane, plane_level))
+ 		goto out_free_plane;
+ 
++
+ 	kvm->planes[plane_level] = plane;
+ 
+ 	return plane;
+-- 
+2.55.0
+

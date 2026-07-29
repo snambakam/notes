@@ -1,0 +1,304 @@
+From 1440d0c0b823626624b81355572a34c35dea65b6 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Wed, 4 Mar 2026 12:39:19 +0100
+Subject: [RFC PATCH v1 013/132] kvm: Add read accessors for
+ kvm_vcpu scheduling state
+
+Introduce accessor functions for the scheduling state in struct
+kvm_vcpu to make it easier to move these fields to struct
+kvm_vcpu_common.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+---
+ arch/arm64/kvm/arm.c           |  2 +-
+ arch/arm64/kvm/nested.c        |  2 +-
+ arch/loongarch/kvm/vcpu.c      |  5 +++--
+ arch/mips/kvm/mips.c           |  2 +-
+ arch/powerpc/kvm/powerpc.c     |  2 +-
+ arch/riscv/kvm/vcpu.c          |  2 +-
+ arch/s390/kvm/kvm-s390.c       |  2 +-
+ arch/x86/kvm/svm/svm.c         |  2 +-
+ arch/x86/kvm/vmx/posted_intr.c |  2 +-
+ arch/x86/kvm/vmx/vmx.c         |  2 +-
+ arch/x86/kvm/x86.c             | 12 ++++++------
+ arch/x86/kvm/xen.h             |  2 +-
+ include/linux/kvm_host.h       | 20 ++++++++++++++++++++
+ virt/kvm/kvm_main.c            |  6 +++---
+ 14 files changed, 42 insertions(+), 21 deletions(-)
+
+diff --git a/arch/arm64/kvm/arm.c b/arch/arm64/kvm/arm.c
+index 50adfff75be8..8be45f5ed14f 100644
+--- a/arch/arm64/kvm/arm.c
++++ b/arch/arm64/kvm/arm.c
+@@ -1261,7 +1261,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
+ 
+ 	vcpu_load(vcpu);
+ 
+-	if (!vcpu->wants_to_run) {
++	if (!kvm_vcpu_wants_to_run(vcpu)) {
+ 		ret = -EINTR;
+ 		goto out;
+ 	}
+diff --git a/arch/arm64/kvm/nested.c b/arch/arm64/kvm/nested.c
+index dfb96edbdc43..2dcbc0552910 100644
+--- a/arch/arm64/kvm/nested.c
++++ b/arch/arm64/kvm/nested.c
+@@ -903,7 +903,7 @@ void kvm_vcpu_put_hw_mmu(struct kvm_vcpu *vcpu)
+ 	 * scheduling out and not in WFI emulation, suggesting it is likely to
+ 	 * reuse the MMU sometime soon.
+ 	 */
+-	if (vcpu->scheduled_out && !vcpu_get_flag(vcpu, IN_WFI))
++	if (kvm_vcpu_scheduled_out(vcpu) && !vcpu_get_flag(vcpu, IN_WFI))
+ 		return;
+ 
+ 	if (kvm_is_nested_s2_mmu(vcpu->kvm, vcpu->arch.hw_mmu))
+diff --git a/arch/loongarch/kvm/vcpu.c b/arch/loongarch/kvm/vcpu.c
+index 20c207d80e31..4731d0f33342 100644
+--- a/arch/loongarch/kvm/vcpu.c
++++ b/arch/loongarch/kvm/vcpu.c
+@@ -1827,7 +1827,8 @@ void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu)
+ 	int cpu, idx;
+ 	unsigned long flags;
+ 
+-	if (vcpu->preempted && kvm_guest_has_pv_feature(vcpu, KVM_FEATURE_PREEMPT)) {
++	if (kvm_vcpu_preempted(vcpu) &&
++	    kvm_guest_has_pv_feature(vcpu, KVM_FEATURE_PREEMPT)) {
+ 		/*
+ 		 * Take the srcu lock as memslots will be accessed to check
+ 		 * the gfn cache generation against the memslots generation.
+@@ -1867,7 +1868,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
+ 		break;
+ 	}
+ 
+-	if (!vcpu->wants_to_run)
++	if (!kvm_vcpu_wants_to_run(vcpu))
+ 		return r;
+ 
+ 	/* Clear exit_reason */
+diff --git a/arch/mips/kvm/mips.c b/arch/mips/kvm/mips.c
+index a53abbba43ea..f928ba105104 100644
+--- a/arch/mips/kvm/mips.c
++++ b/arch/mips/kvm/mips.c
+@@ -433,7 +433,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
+ 		vcpu->mmio_needed = 0;
+ 	}
+ 
+-	if (!vcpu->wants_to_run)
++	if (!kvm_vcpu_wants_to_run(vcpu))
+ 		goto out;
+ 
+ 	lose_fpu(1);
+diff --git a/arch/powerpc/kvm/powerpc.c b/arch/powerpc/kvm/powerpc.c
+index 00302399fc37..800867c164c6 100644
+--- a/arch/powerpc/kvm/powerpc.c
++++ b/arch/powerpc/kvm/powerpc.c
+@@ -1840,7 +1840,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
+ 
+ 	kvm_sigset_activate(vcpu);
+ 
+-	if (!vcpu->wants_to_run)
++	if (!kvm_vcpu_wants_to_run(vcpu))
+ 		r = -EINTR;
+ 	else
+ 		r = kvmppc_vcpu_run(vcpu);
+diff --git a/arch/riscv/kvm/vcpu.c b/arch/riscv/kvm/vcpu.c
+index 977e36ab83d3..d664615c64e5 100644
+--- a/arch/riscv/kvm/vcpu.c
++++ b/arch/riscv/kvm/vcpu.c
+@@ -891,7 +891,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
+ 		return ret;
+ 	}
+ 
+-	if (!vcpu->wants_to_run) {
++	if (!kvm_vcpu_wants_to_run(vcpu)) {
+ 		kvm_vcpu_srcu_read_unlock(vcpu);
+ 		return -EINTR;
+ 	}
+diff --git a/arch/s390/kvm/kvm-s390.c b/arch/s390/kvm/kvm-s390.c
+index 150b5dd2170e..82bcb75ff987 100644
+--- a/arch/s390/kvm/kvm-s390.c
++++ b/arch/s390/kvm/kvm-s390.c
+@@ -5032,7 +5032,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
+ 	if (vcpu->kvm->arch.pv.dumping)
+ 		return -EINVAL;
+ 
+-	if (!vcpu->wants_to_run)
++	if (!kvm_vcpu_wants_to_run(vcpu))
+ 		return -EINTR;
+ 
+ 	if (kvm_run->kvm_valid_regs & ~KVM_SYNC_S390_VALID_FIELDS ||
+diff --git a/arch/x86/kvm/svm/svm.c b/arch/x86/kvm/svm/svm.c
+index 94c366ab059f..90c345f7e0f8 100644
+--- a/arch/x86/kvm/svm/svm.c
++++ b/arch/x86/kvm/svm/svm.c
+@@ -1488,7 +1488,7 @@ static void svm_prepare_host_switch(struct kvm_vcpu *vcpu)
+ 
+ static void svm_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
+ {
+-	if (vcpu->scheduled_out && !kvm_pause_in_guest(vcpu->kvm))
++	if (kvm_vcpu_scheduled_out(vcpu) && !kvm_pause_in_guest(vcpu->kvm))
+ 		shrink_ple_window(vcpu);
+ 
+ 	if (kvm_vcpu_apicv_active(vcpu))
+diff --git a/arch/x86/kvm/vmx/posted_intr.c b/arch/x86/kvm/vmx/posted_intr.c
+index 4a6d9a17da23..cba1e6346fc5 100644
+--- a/arch/x86/kvm/vmx/posted_intr.c
++++ b/arch/x86/kvm/vmx/posted_intr.c
+@@ -239,7 +239,7 @@ void vmx_vcpu_pi_put(struct kvm_vcpu *vcpu)
+ 	 * the cost of propagating PIR.IRR to PID.ON is negligible compared to
+ 	 * the cost of a spurious IRQ, and vCPU put/load is a slow path.
+ 	 */
+-	if (!vcpu->preempted && kvm_vcpu_is_blocking(vcpu) &&
++	if (!kvm_vcpu_preempted(vcpu) && kvm_vcpu_is_blocking(vcpu) &&
+ 	    ((is_td_vcpu(vcpu) && tdx_interrupt_allowed(vcpu)) ||
+ 	     (!is_td_vcpu(vcpu) && !vmx_interrupt_blocked(vcpu))))
+ 		pi_enable_wakeup_handler(vcpu);
+diff --git a/arch/x86/kvm/vmx/vmx.c b/arch/x86/kvm/vmx/vmx.c
+index d1ece6ef6f63..d7988c820b9a 100644
+--- a/arch/x86/kvm/vmx/vmx.c
++++ b/arch/x86/kvm/vmx/vmx.c
+@@ -1556,7 +1556,7 @@ void vmx_vcpu_load_vmcs(struct kvm_vcpu *vcpu, int cpu)
+  */
+ void vmx_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
+ {
+-	if (vcpu->scheduled_out && !kvm_pause_in_guest(vcpu->kvm))
++	if (kvm_vcpu_scheduled_out(vcpu) && !kvm_pause_in_guest(vcpu->kvm))
+ 		shrink_ple_window(vcpu);
+ 
+ 	vmx_vcpu_load_vmcs(vcpu, cpu);
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index 094203113fa3..3b0128bd26e3 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -5146,7 +5146,7 @@ void kvm_arch_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
+ 
+ 	kvm_request_l1tf_flush_l1d();
+ 
+-	if (vcpu->scheduled_out && pmu->version && pmu->event_count) {
++	if (kvm_vcpu_scheduled_out(vcpu) && pmu->version && pmu->event_count) {
+ 		pmu->need_cleanup = true;
+ 		kvm_make_request(KVM_REQ_PMU, vcpu);
+ 	}
+@@ -5271,7 +5271,7 @@ void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu)
+ {
+ 	int idx;
+ 
+-	if (vcpu->preempted) {
++	if (kvm_vcpu_preempted(vcpu)) {
+ 		/*
+ 		 * Assume protected guests are in-kernel.  Inefficient yielding
+ 		 * due to false positives is preferable to never yielding due
+@@ -10370,7 +10370,7 @@ static void kvm_sched_yield(struct kvm_vcpu *vcpu, unsigned long dest_id)
+ 
+ 	rcu_read_unlock();
+ 
+-	if (!target || !READ_ONCE(target->ready))
++	if (!target || !kvm_vcpu_ready(target))
+ 		goto no_yield;
+ 
+ 	/* Ignore requests to yield to self */
+@@ -11978,7 +11978,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
+ 
+ 	kvm_vcpu_srcu_read_lock(vcpu);
+ 	if (unlikely(vcpu->arch.mp_state == KVM_MP_STATE_UNINITIALIZED)) {
+-		if (!vcpu->wants_to_run) {
++		if (!kvm_vcpu_wants_to_run(vcpu)) {
+ 			r = -EINTR;
+ 			goto out;
+ 		}
+@@ -12057,7 +12057,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu)
+ 		WARN_ON_ONCE(vcpu->mmio_needed);
+ 	}
+ 
+-	if (!vcpu->wants_to_run) {
++	if (!kvm_vcpu_wants_to_run(vcpu)) {
+ 		r = -EINTR;
+ 		goto out;
+ 	}
+@@ -12956,7 +12956,7 @@ static void kvm_xstate_reset(struct kvm_vcpu *vcpu, bool init_event)
+ 	 * only path that can trigger INIT emulation _and_ loads FPU state, and
+ 	 * KVM_RUN should _always_ load FPU state.
+ 	 */
+-	WARN_ON_ONCE(vcpu->wants_to_run != fpstate->in_use);
++	WARN_ON_ONCE(kvm_vcpu_wants_to_run(vcpu) != fpstate->in_use);
+ 	fpu_in_use = fpstate->in_use;
+ 	if (fpu_in_use)
+ 		kvm_put_guest_fpu(vcpu);
+diff --git a/arch/x86/kvm/xen.h b/arch/x86/kvm/xen.h
+index 59e6128a7bd3..78793c1ac913 100644
+--- a/arch/x86/kvm/xen.h
++++ b/arch/x86/kvm/xen.h
+@@ -206,7 +206,7 @@ static inline void kvm_xen_runstate_set_preempted(struct kvm_vcpu *vcpu)
+ 	 * behalf of the vCPU. Only if the VMM does actually block
+ 	 * does it need to enter RUNSTATE_blocked.
+ 	 */
+-	if (WARN_ON_ONCE(!vcpu->preempted))
++	if (WARN_ON_ONCE(!kvm_vcpu_preempted(vcpu)))
+ 		return;
+ 
+ 	kvm_xen_update_runstate(vcpu, RUNSTATE_runnable);
+diff --git a/include/linux/kvm_host.h b/include/linux/kvm_host.h
+index 8b9c30f0d209..d6a008aa419d 100644
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -414,6 +414,26 @@ struct kvm_vcpu {
+ 	unsigned plane_level;
+ };
+ 
++static inline bool kvm_vcpu_wants_to_run(struct kvm_vcpu *vcpu)
++{
++	return vcpu->wants_to_run;
++}
++
++static inline bool kvm_vcpu_preempted(struct kvm_vcpu *vcpu)
++{
++	return READ_ONCE(vcpu->preempted);
++}
++
++static inline bool kvm_vcpu_ready(struct kvm_vcpu *vcpu)
++{
++	return READ_ONCE(vcpu->ready);
++}
++
++static inline bool kvm_vcpu_scheduled_out(struct kvm_vcpu *vcpu)
++{
++	return vcpu->scheduled_out;
++}
++
+ /*
+  * Start accounting time towards a guest.
+  * Must be called before entering guest context.
+diff --git a/virt/kvm/kvm_main.c b/virt/kvm/kvm_main.c
+index 0f677920fb48..2e363a79d144 100644
+--- a/virt/kvm/kvm_main.c
++++ b/virt/kvm/kvm_main.c
+@@ -4134,7 +4134,7 @@ void kvm_vcpu_on_spin(struct kvm_vcpu *me, bool yield_to_kernel_mode)
+ 			continue;
+ 
+ 		vcpu = xa_load(&kvm->planes[0]->vcpu_array, idx);
+-		if (!READ_ONCE(vcpu->ready))
++		if (!kvm_vcpu_ready(vcpu))
+ 			continue;
+ 		if (kvm_vcpu_is_blocking(vcpu) && !vcpu_dy_runnable(vcpu))
+ 			continue;
+@@ -4145,7 +4145,7 @@ void kvm_vcpu_on_spin(struct kvm_vcpu *me, bool yield_to_kernel_mode)
+ 		 * waiting on IPI delivery, i.e. the target vCPU is in-kernel
+ 		 * for the purposes of directed yield.
+ 		 */
+-		if (READ_ONCE(vcpu->preempted) && yield_to_kernel_mode &&
++		if (kvm_vcpu_preempted(vcpu) && yield_to_kernel_mode &&
+ 		    !kvm_arch_dy_has_pending_interrupt(vcpu) &&
+ 		    !kvm_arch_vcpu_preempted_in_kernel(vcpu))
+ 			continue;
+@@ -6509,7 +6509,7 @@ static void kvm_sched_out(struct preempt_notifier *pn,
+ 
+ 	WRITE_ONCE(vcpu->scheduled_out, true);
+ 
+-	if (task_is_runnable(current) && vcpu->wants_to_run) {
++	if (task_is_runnable(current) && kvm_vcpu_wants_to_run(vcpu)) {
+ 		WRITE_ONCE(vcpu->preempted, true);
+ 		WRITE_ONCE(vcpu->ready, true);
+ 	}
+-- 
+2.55.0
+

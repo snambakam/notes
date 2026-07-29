@@ -1,0 +1,421 @@
+From bf6ed39a4e3273891281210a0724210c23fd1e36 Mon Sep 17 00:00:00 2001
+From: Sriram Nambakam <snambakam@linux.microsoft.com>
+Date: Wed, 29 Jul 2026 00:18:05 -0700
+Subject: [RFC PATCH v1 000/132] VBS/VSM-on-KVM: KVM VM planes and
+ the in-kernel secure VM plane (VTL)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This RFC implements a Virtualization-Based Security (VBS) / Hyper-V VSM style
+secure environment on top of KVM VM planes. A higher-privilege "secure plane"
+(analogous to a Hyper-V VTL) runs alongside the normal plane, with its own EPT
+root and memory that the normal plane cannot touch; the two communicate through
+VTL call/return hypercalls rather than a trampoline.
+
+This series is the *full* plane stack linearized as a clean, bisectable history
+directly on mainline (v7.2-rc5). It folds together:
+
+  - Joerg Roedel's KVM VM planes work (the in-kernel plane infrastructure);
+  - Paolo Bonzini's original VM-plane model that Joerg's tree carries forward;
+    and
+  - the safe-tee VBS/VSM secure-plane patches layered on top.
+
+Authorship is preserved on every commit; the shortlog below is grouped by
+author. The result applies directly on upstream master with no external base to
+hunt down.
+
+On top of the plane infrastructure the VBS/VSM portion adds:
+
+  - in-kernel plane switching and VBS VTL call/return + cross-plane
+    set-mem-attrs hypercalls (arch-neutral helper + x86 wiring);
+  - a secure-plane monitor backend and park/secure_monitor loop;
+  - rootfs_initcall plane setup that loads the secure-plane ELF payload and
+    runs the HEKI seal;
+  - normal-plane access denial to secure-plane memory; and
+  - assorted plane/selftest fixes (realmode trampoline skip, plane-fd
+    KVM_CHECK_EXTENSION, split-IRQ-chip selftests).
+
+Repositories (safe-tee GitHub org)
+==================================
+
+Everything needed to fetch, apply, build, and test this series is published
+under the safe-tee organization on GitHub:
+
+  - kernel: https://github.com/safe-tee/linux
+      branch kvm-planes-v7.2-rc5     this series: the full VM-planes + VBS/VSM
+                                     stack linearized on mainline v7.2-rc5
+                                     (the base-commit listed below).
+      branch vm-planes-merged        the original merge-based integration tree
+                                     this series was linearized from.
+
+  - qemu:   https://github.com/safe-tee/qemu
+      branch qemu-planes-v11.1.0-rc1 the QEMU counterpart series, linearized
+                                     on mainline v11.1.0-rc1.
+
+  - lvbs:   https://github.com/safe-tee/lvbs
+      the build/test workspace, scripts, and documentation that tie the
+      three trees together.
+
+Build and test
+==============
+
+The lvbs repository documents the full build-and-run flow (kernel, QEMU,
+secure kernel, and Fedora VM image) with VM planes enabled:
+
+  https://github.com/safe-tee/lvbs/blob/main/docs/how-to/build.md
+
+Quick start, from the lvbs repo root, with the linux, qemu, and lvbs trees
+checked out side by side under a common workspace root:
+
+  make kernel          # plane 0 bzImage + plane 1 vmlinux
+  make secure-kernel   # standalone minimal plane-1 kernel
+  make qemu            # qemu-system-x86_64
+  make image           # fedora-kvm.raw (uses the secure kernel)
+
+Design and reference material (VM planes architecture, LVBS boot process,
+VBS backends, plane-switch sequence, and the LVBS patch overview) lives under
+lvbs/docs/reference/.
+
+Acknowledgments
+===============
+
+This work stands on top of, and is indebted to, several prior efforts:
+
+  - Joerg Roedel, whose KVM VM planes tree (kvm-planes-v7.1) this series
+    is layered directly on top of. His planes implementation provides the
+    in-kernel plane infrastructure that the VBS/VSM secure plane relies on.
+
+  - Paolo Bonzini, whose "[RFC PATCH 00/29] KVM: VM planes" introduced the
+    VM plane concept to KVM as a common in-kernel model for AMD VMPLs, Intel
+    TDX partitions, Hyper-V VTLs, and ARM CCA planes. Joerg Roedel's tree
+    (which this series builds on) carries that work forward.
+    https://lwn.net/Articles/1016113/
+
+  - The prior Linux VBS (LVBS) and Hypervisor-Enforced Kernel Integrity
+    (HEKI) work by James Morris, Thara Gopinath, Wei Liu,
+    Madhavan Venkataraman, and Mickaël Salaün, posted as
+    "[RFC PATCH v2 00/19] Hypervisor-Enforced Kernel Integrity (HEKI)".
+    The kernel-sealing model used here follows their design.
+
+  - James Bottomley and James Morris, for their ongoing work on VSM-on-KVM,
+    which informed the design and direction of this series.
+
+Posted as an RFC to gather feedback on the VBS-on-KVM plane model and the
+VTL hypercall ABI. Comments welcome.
+
+Joerg Roedel (44):
+  kvm: Introduce struct kvm_vcpu_common
+  kvm: Move vcpu accounting to struct kvm_vcpu_common
+  kvm: Add read accessors for kvm_vcpu scheduling state
+  kvm: Make kvm_running_vcpus point to struct kvm_vcpu_common
+  kvm: Move VCPU scheduling state to struct kvm_vcpu_common
+  kvm: Add accessors for kvm_vcpu->mutex
+  kvm: Move VCPU locking to struct kvm_vcpu_common
+  kvm: Move kvm_vcpu->rcuwait to struct kvm_vcpu_common
+  kvm: Introduce accessors for kvm_vcpu->mode
+  kvm: Move kvm_vcpu mode and requests field to struct kvm_vcpu_common
+  kvm: Introduce per-plane VCPU requests
+  kvm: Move kvm_vcpu pid members to struct kvm_vcpu_common
+  kvm: Move kvm_vcpu sigset members to struct kvm_vcpu_common
+  kvm: Move kvm_vcpu spinloop members to struct kvm_vcpu_common
+  kvm: Move kvm_vcpu->dirty_ring to struct kvm_vcpu_common
+  kvm: Introduce arch-specific plane state
+  kvm: Introduce arch-specific part of struct kvm_vcpu_common
+  kvm: Allocate struct kvm_plane in architecture code
+  KVM: Implement KVM_CREATE_VCPU ioctl for planes
+  kvm: Keep track of plane VCPUs in struct kvm_vcpu_common
+  kvm: Add VCPU plane-scheduling state and helpers
+  kvm: Add plane_level to kvm_kernel_irq_routing_entry
+  kvm: Pass plane_level to kvm_set_routing_entry()
+  kvm: Make KVM_SET_GSI_ROUTING per plane
+  kvm: x86: Handle IOAPIC EOIs per plane
+  kvm: x86: Move CPUID state to struct kvm_vcpu_arch_common
+  kvm: x86: Move cpu_caps to struct kvm_vcpu_arch_common
+  kvm: x86: Update state for all plane VCPUs after CPUID update
+  kvm: x86: Share MTRR state across planes
+  kvm: x86: Select a plane to run
+  kvm: x86: Make event injection VCPU requests per-plane
+  kvm: x86: Allow hardware backend to overwrite struct kvm_plane
+    allocation
+  kvm: x86: Make KVM_REQ_UPDATE_PROTECTED_GUEST_STATE per plane
+  kvm: x86: Share pio_data across planes
+  kvm: x86: Switch to plane0 if it has events
+  kvm: x86: Restrict KVM planes support to KVM_IRQCHIP_SPLIT
+  kvm: svm: Track vmsa_features per plane
+  kvm: Move kvm_vcpu pid members to struct kvm_vcpu_common
+  kvm: Move kvm_vcpu spinloop members to struct kvm_vcpu_common
+  kvm: Allocate struct kvm_plane in architecture code
+  KVM: Implement KVM_CREATE_VCPU ioctl for planes
+  kvm: x86: Select a plane to run
+  kvm: x86: Allow hardware backend to overwrite struct kvm_plane
+    allocation
+  kvm: x86: Switch to plane0 if it has events
+
+Melody Wang (7):
+  x86/sev: Define the #HV doorbell page structure
+  KVM: SVM: Add support for the SEV-SNP #HV doorbell page NAE event
+  KVM: SVM: Inject #HV when Restricted Injection is active
+  KVM: SVM: Inject NMIs when Restricted Injection is active
+  KVM: SVM: Inject MCEs when Restricted Injection is active
+  KVM: SVM: Enable Restricted Injection for an SEV-SNP guest
+  KVM: SVM: Add support for the SEV-SNP #HV IPI NAE event
+
+Paolo Bonzini (33):
+  Documentation: kvm: introduce "VM plane" concept
+  kvm: Introduce struct kvm_plane
+  kvm: Move vcpu_array to struct kvm_plane
+  kvm: Implement KVM_CAP_PLANES
+  kvm: Implement KVM_CREATE_PLANE ioctl
+  kvm: Add KVM_EXIT_PLANE_EVENT
+  kvm: Allocate struct kvm_run only for struct kvm_vcpu_common
+  kvm: Make KVM_SIGNAL_MSI per plane
+  kvm: x86: Make apic_map per plane
+  kvm: x86: Make local APIC code aware of planes
+  kvm: x86: Introduce max_planes x86-op
+  Documentation: kvm: introduce "VM plane" concept
+  KVM: API definitions for plane userspace exit
+  KVM: introduce struct kvm_arch_plane
+  KVM: move mem_attr_array to kvm_plane
+  KVM: implement plane file descriptors ioctl and creation
+  KVM: share statistics for same vCPU id on different planes
+  KVM: implement vCPU creation for extra planes
+  KVM: pass plane to kvm_arch_vcpu_create
+  KVM: x86: block creating irqchip if planes are active
+  KVM: x86: track APICv inhibits per plane
+  KVM: x86: move APIC map to kvm_arch_plane
+  KVM: x86: add planes support for interrupt delivery
+  KVM: x86: add infrastructure to share FPU across planes
+  KVM: x86: extract kvm_post_set_cpuid
+  KVM: x86: initialize CPUID for non-default planes
+  KVM: x86: handle interrupt priorities for planes
+  KVM: x86: enable up to 16 planes
+  selftests: kvm: introduce basic test for VM planes
+  selftests: kvm: add plane infrastructure
+  selftests: kvm: add x86-specific plane test
+  kvm: Move vcpu_array to struct kvm_plane
+  kvm: x86: Make local APIC code aware of planes
+
+Sriram Nambakam (42):
+  Fix merge issue - Remove duplicate definition for
+    kvm_arch_has_irq_bypass
+  Fix compilation
+  Fix compile error
+  Fix compile errors
+  Initial support for VM Planes - Add kernel config for CONFIG_VM_PLANES
+    - Parse vm plane config from initrd for plane configuration - Make
+    hypercalls to allocate memory for the vm planes.
+  Use vcpu count from the plane configuration
+  skip processing plane configuration for plane 0 - plane 0 is the boot
+    plane
+  Add plane config param to specify kernel image format
+  Activate the VM Planes through the Hypervisor - Using KVM as the VMM
+  allow the command line to be specified for kernels in other planes
+  Various changes to support VM Planes.
+  Add a Virtualization Based Security (VBS) framework. - Add backends
+    for AMD SEV-SNP, Intel TDX, Arm CCA and KVM Planes. - Support VTL on
+    Hyper-V in addition to Planes on KVM.
+  Add a inter-plane communication mechanism through KVM. - model this to
+    use a single page similar to SEV-SNP
+  KVM: Add per-plane memory attribute support for cross-plane EPT
+    protection
+  KVM: x86: Add KVM_HC_VBS_VTL_CALL hypercall for VBS inter-plane calls
+  vbs: Add HEKI kernel sealing and fix KVM plane memory attribute guards
+  vbs: Add module authentication via VBS/HEKI
+  vbs: Add kexec validation and make module auth non-fatal
+  Merge branch 'master' into vm-planes
+  kvm: x86: fix merged plane API/stat build regressions
+  KVM: x86: exit VM planes and VBS hypercalls to userspace
+  kexec: block legacy kexec_load when VBS is active
+  kvm: x86: fix merged plane API/stat build regressions
+  KVM: planes: expose memory-attribute setting to in-kernel callers
+  vm_planes: drop unused per-plane vcpu_count
+  drivers/virt: add VBS secure-plane park loop
+  KVM: planes: add arch-neutral in-kernel plane switch helper
+  KVM: x86: add VBS VTL call/return and cross-plane set-mem-attrs
+    hypercalls
+  init/vm_planes: set up planes from rootfs_initcall and load ELF
+    payloads
+  security/vbs: run backend probe and HEKI seal at rootfs_initcall
+  security/vbs: pin the VTL call hypercall to CPU0
+  security/vbs: add secure-plane monitor backend
+  drivers/virt: rename VBS park loop to secure_monitor
+  x86/realmode: skip the sub-1M trampoline for the VBS secure plane
+  KVM: x86: deny normal-plane access to secure-plane memory
+  KVM: plane: handle KVM_CHECK_EXTENSION on the plane fd
+  KVM: selftests: run plane tests with a split IRQ chip
+  kvm: x86: drop obsolete kvm_cache_regs.h
+  kvm: arch: finalize plane hooks and kvm_arch_vcpu_create signature
+  kvm: x86: use kvm_vcpu scheduling-state accessors and struct stat
+    fields
+  kvm: x86: finalize per-plane APIC state and CPUID placement
+  kvm: planes: reconcile core plane state, UAPI and hypercall exit
+
+Tom Lendacky (6):
+  kvm: svm: Implement GET_AP_APIC_IDS NAE event
+  kvm: sev: Allow for VMPL level specification in AP create
+  kvm: svm: Invoke a specified VMPL level VMSA for the vCPU
+  kvm: svm: Implement max_planes x86 operation
+  kvm: svm: Advertise full multi-VMPL support to the SNP guest
+  kvm: svm: Implement max_planes x86 operation
+
+ Documentation/virt/kvm/api.rst                | 258 +++++-
+ Documentation/virt/kvm/locking.rst            |   3 +
+ Documentation/virt/kvm/vcpu-requests.rst      |   7 +
+ arch/arm64/include/asm/kvm_host.h             |  26 +-
+ arch/arm64/kvm/arch_timer.c                   |   3 +-
+ arch/arm64/kvm/arm.c                          |  37 +-
+ arch/arm64/kvm/handle_exit.c                  |   6 +-
+ arch/arm64/kvm/hyp/nvhe/gen-hyprel.c          |   4 +-
+ arch/arm64/kvm/inject_fault.c                 |   4 +-
+ arch/arm64/kvm/mmio.c                         |   4 +-
+ arch/arm64/kvm/nested.c                       |   2 +-
+ arch/arm64/kvm/vgic/vgic-init.c               |   3 +-
+ arch/arm64/kvm/vgic/vgic-irqfd.c              |   7 +-
+ arch/loongarch/include/asm/kvm_host.h         |  22 +
+ arch/loongarch/kvm/exit.c                     |   8 +-
+ arch/loongarch/kvm/intc/pch_pic.c             |   2 +-
+ arch/loongarch/kvm/irqfd.c                    |   5 +-
+ arch/loongarch/kvm/vcpu.c                     |  20 +-
+ arch/loongarch/kvm/vm.c                       |  18 +
+ arch/mips/include/asm/kvm_host.h              |  23 +
+ arch/mips/kvm/emulate.c                       |   2 +-
+ arch/mips/kvm/mips.c                          |  67 +-
+ arch/mips/kvm/vz.c                            |  18 +-
+ arch/powerpc/include/asm/kvm_host.h           |  23 +
+ arch/powerpc/kvm/book3s.c                     |   2 +-
+ arch/powerpc/kvm/book3s_hv.c                  |  46 +-
+ arch/powerpc/kvm/book3s_hv_rm_xics.c          |   8 +-
+ arch/powerpc/kvm/book3s_pr.c                  |  24 +-
+ arch/powerpc/kvm/book3s_pr_papr.c             |   2 +-
+ arch/powerpc/kvm/book3s_xics.c                |   4 +-
+ arch/powerpc/kvm/book3s_xive.c                |   4 +-
+ arch/powerpc/kvm/book3s_xive_native.c         |   4 +-
+ arch/powerpc/kvm/booke.c                      |   2 +-
+ arch/powerpc/kvm/mpic.c                       |   6 +-
+ arch/powerpc/kvm/powerpc.c                    |  33 +-
+ arch/powerpc/kvm/timing.h                     |  28 +-
+ arch/powerpc/kvm/trace.h                      |   2 +-
+ arch/riscv/include/asm/kvm_host.h             |  17 +
+ arch/riscv/kvm/aia_device.c                   |   4 +-
+ arch/riscv/kvm/main.c                         |  18 +
+ arch/riscv/kvm/vcpu.c                         |  13 +-
+ arch/riscv/kvm/vcpu_exit.c                    |  10 +-
+ arch/riscv/kvm/vcpu_insn.c                    |  16 +-
+ arch/riscv/kvm/vcpu_sbi.c                     |   2 +-
+ arch/riscv/kvm/vcpu_sbi_hsm.c                 |   2 +-
+ arch/riscv/kvm/vm.c                           |   6 +-
+ arch/s390/include/asm/kvm_host.h              |  23 +
+ arch/s390/kvm/diag.c                          |  18 +-
+ arch/s390/kvm/intercept.c                     |  20 +-
+ arch/s390/kvm/interrupt.c                     |  59 +-
+ arch/s390/kvm/kvm-s390.c                      |  41 +-
+ arch/s390/kvm/priv.c                          |  58 +-
+ arch/s390/kvm/pv.c                            |   2 +-
+ arch/s390/kvm/sigp.c                          |  50 +-
+ arch/s390/kvm/vsie.c                          |   2 +-
+ arch/x86/include/asm/cpu.h                    |  10 +
+ arch/x86/include/asm/cpufeatures.h            |   1 +
+ arch/x86/include/asm/kvm-x86-ops.h            |   4 +
+ arch/x86/include/asm/kvm_host.h               | 113 ++-
+ arch/x86/include/asm/sev-common.h             |   8 +
+ arch/x86/include/asm/svm.h                    |  42 +
+ arch/x86/include/uapi/asm/svm.h               |   9 +
+ arch/x86/kernel/cpu/common.c                  |  64 ++
+ arch/x86/kvm/cpuid.c                          |  70 +-
+ arch/x86/kvm/cpuid.h                          |  33 +-
+ arch/x86/kvm/hyperv.c                         |   3 +-
+ arch/x86/kvm/i8254.c                          |   2 +-
+ arch/x86/kvm/ioapic.c                         |  12 +-
+ arch/x86/kvm/irq.c                            |  19 +-
+ arch/x86/kvm/irq_comm.c                       | 450 +++++++++
+ arch/x86/kvm/lapic.c                          | 146 +--
+ arch/x86/kvm/lapic.h                          |  14 +-
+ arch/x86/kvm/mmu/mmu.c                        |  46 +-
+ arch/x86/kvm/mmu/spte.h                       |  33 +
+ arch/x86/kvm/mmu/tdp_mmu.c                    |   4 +-
+ arch/x86/kvm/mtrr.c                           |  12 +-
+ arch/x86/kvm/smm.c                            |   2 +-
+ arch/x86/kvm/svm/sev.c                        | 627 ++++++++++++-
+ arch/x86/kvm/svm/svm.c                        |  87 +-
+ arch/x86/kvm/svm/svm.h                        |  52 +-
+ arch/x86/kvm/trace.h                          |   2 +-
+ arch/x86/kvm/vmx/common.h                     |   2 +-
+ arch/x86/kvm/vmx/main.c                       |  16 +-
+ arch/x86/kvm/vmx/nested.c                     |   2 +-
+ arch/x86/kvm/vmx/nested.h                     |   4 +-
+ arch/x86/kvm/vmx/posted_intr.c                |   2 +-
+ arch/x86/kvm/vmx/vmx.c                        |  11 +-
+ arch/x86/kvm/vmx/x86_ops.h                    |   1 +
+ arch/x86/kvm/x86.c                            | 469 +++++++++-
+ arch/x86/kvm/x86.h                            |   5 +
+ arch/x86/kvm/xen.c                            |   3 +-
+ arch/x86/kvm/xen.h                            |   2 +-
+ arch/x86/realmode/init.c                      |  26 +
+ drivers/virt/Kconfig                          |  15 +
+ drivers/virt/Makefile                         |   1 +
+ drivers/virt/secure_monitor.c                 | 218 +++++
+ include/linux/kvm_host.h                      | 333 +++++--
+ include/linux/kvm_types.h                     |   2 +
+ include/linux/vbs.h                           | 204 +++++
+ include/linux/vm_planes.h                     |  33 +
+ include/uapi/linux/kvm.h                      |  21 +
+ include/uapi/linux/kvm_para.h                 |   5 +
+ init/Kconfig                                  |  17 +
+ init/Makefile                                 |   4 +
+ init/main.c                                   |   1 +
+ init/vm_planes.c                              | 664 ++++++++++++++
+ kernel/kexec.c                                |  10 +
+ kernel/kexec_core.c                           |   5 +
+ kernel/kexec_file.c                           |  20 +
+ kernel/module/main.c                          |  38 +
+ security/Kconfig                              |   2 +
+ security/Makefile                             |   3 +
+ security/vbs/Kconfig                          |  83 ++
+ security/vbs/Makefile                         |  13 +
+ security/vbs/arm_cca.c                        | 300 ++++++
+ security/vbs/core.c                           | 205 +++++
+ security/vbs/heki.c                           | 287 ++++++
+ security/vbs/heki.h                           | 143 +++
+ security/vbs/hv_vsm.c                         | 257 ++++++
+ security/vbs/internal.h                       |  41 +
+ security/vbs/kvm_planes.c                     | 408 +++++++++
+ security/vbs/probe.c                          | 104 +++
+ security/vbs/sev_snp.c                        | 224 +++++
+ security/vbs/tdx.c                            | 280 ++++++
+ tools/testing/selftests/kvm/Makefile.kvm      |   2 +
+ .../testing/selftests/kvm/include/kvm_util.h  |  60 ++
+ .../selftests/kvm/include/x86/processor.h     |   1 +
+ tools/testing/selftests/kvm/lib/kvm_util.c    |  53 +-
+ .../testing/selftests/kvm/lib/x86/processor.c |  15 +
+ tools/testing/selftests/kvm/plane_test.c      | 109 +++
+ .../selftests/kvm/x86/plane_x86_test.c        | 193 ++++
+ virt/kvm/dirty_ring.c                         |   4 +-
+ virt/kvm/irqchip.c                            |  13 +-
+ virt/kvm/kvm_main.c                           | 851 +++++++++++++-----
+ 134 files changed, 7879 insertions(+), 869 deletions(-)
+ create mode 100644 arch/x86/kvm/irq_comm.c
+ create mode 100644 drivers/virt/secure_monitor.c
+ create mode 100644 include/linux/vbs.h
+ create mode 100644 include/linux/vm_planes.h
+ create mode 100644 init/vm_planes.c
+ create mode 100644 security/vbs/Kconfig
+ create mode 100644 security/vbs/Makefile
+ create mode 100644 security/vbs/arm_cca.c
+ create mode 100644 security/vbs/core.c
+ create mode 100644 security/vbs/heki.c
+ create mode 100644 security/vbs/heki.h
+ create mode 100644 security/vbs/hv_vsm.c
+ create mode 100644 security/vbs/internal.h
+ create mode 100644 security/vbs/kvm_planes.c
+ create mode 100644 security/vbs/probe.c
+ create mode 100644 security/vbs/sev_snp.c
+ create mode 100644 security/vbs/tdx.c
+ create mode 100644 tools/testing/selftests/kvm/plane_test.c
+ create mode 100644 tools/testing/selftests/kvm/x86/plane_x86_test.c
+
+
+base-commit: fc02acf6ac0ccde0c805c2daa9148683cdd01ba8
+--
+2.55.0
+

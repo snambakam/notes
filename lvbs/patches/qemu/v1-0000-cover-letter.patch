@@ -1,0 +1,150 @@
+From d95c6ae9845891b59464b21d7b4f7c47eb489a96 Mon Sep 17 00:00:00 2001
+From: Sriram Nambakam <snambakam@linux.microsoft.com>
+Date: Wed, 29 Jul 2026 00:19:32 -0700
+Subject: [RFC PATCH v1 00/18] VBS/VSM-on-KVM: QEMU support for KVM
+ VM planes and the secure VM plane
+
+This RFC adds the QEMU userspace support needed to run a Virtualization-Based
+Security (VBS) / Hyper-V VSM style secure environment as an in-kernel KVM
+"VM plane". It is the QEMU counterpart to the kernel series of the same name,
+"[RFC PATCH VSM-ON-KVM] VBS/VSM-on-KVM: KVM VM planes and the in-kernel secure
+VM plane (VTL)".
+
+This series is the *full* QEMU VM-planes stack linearized as a clean, bisectable
+history directly on mainline (v11.1.0-rc1). It folds together Joerg Roedel's
+QEMU VM-planes work and the safe-tee VBS/VSM
+secure-plane support. Authorship is preserved on every commit; the shortlog
+below is grouped by author, and the series applies directly on upstream master
+with no external base to hunt down.
+
+The VBS/VSM portion wires up:
+
+  - userspace handlers for the VM-plane and VBS VTL-call hypercalls that KVM
+    exits to QEMU (KVM_EXIT_HYPERCALL);
+  - the kvm_para.h / kvm.h header sync for the VBS VTL hypercall ABI; and
+  - loading the secure-plane kernel payload and running the secure plane
+    in-kernel (Option B).
+
+Repositories (safe-tee GitHub org)
+==================================
+
+Everything needed to fetch, apply, build, and test this series is published
+under the safe-tee organization on GitHub:
+
+  - qemu:   https://github.com/safe-tee/qemu
+      branch qemu-planes-v11.1.0-rc1 this series: the full QEMU VM-planes +
+                                     VBS/VSM stack linearized on mainline
+                                     v11.1.0-rc1 (the base-commit below).
+      branch vm-planes-merged        the original merge-based integration tree
+                                     this series was linearized from.
+
+  - kernel: https://github.com/safe-tee/linux
+      branch kvm-planes-v7.2-rc5     the kernel counterpart series (posted
+                                     as "[RFC PATCH VSM-ON-KVM] VBS/VSM-on-
+                                     KVM: KVM VM planes and the in-kernel
+                                     secure VM plane (VTL)").
+
+  - lvbs:   https://github.com/safe-tee/lvbs
+      the build/test workspace, scripts, and documentation that tie the
+      kernel and QEMU trees together.
+
+Build and test
+==============
+
+The lvbs repository documents the full build-and-run flow with VM planes
+enabled:
+
+  https://github.com/safe-tee/lvbs/blob/main/docs/how-to/build.md
+
+Quick start, from the lvbs repo root, with the linux, qemu, and lvbs trees
+checked out side by side under a common workspace root:
+
+  make kernel          # plane 0 bzImage + plane 1 vmlinux
+  make secure-kernel   # standalone minimal plane-1 kernel
+  make qemu            # qemu-system-x86_64
+  make image           # fedora-kvm.raw (uses the secure kernel)
+
+Acknowledgments
+===============
+
+This work stands on top of, and is indebted to, several prior efforts:
+
+  - Joerg Roedel, whose KVM VM planes work (kernel and QEMU) this series is
+    layered directly on top of, and which provides the in-kernel plane
+    infrastructure that the VBS/VSM secure plane relies on.
+
+  - Paolo Bonzini, whose "[RFC PATCH 00/29] KVM: VM planes" introduced the
+    VM plane concept to KVM as a common in-kernel model for AMD VMPLs, Intel
+    TDX partitions, Hyper-V VTLs, and ARM CCA planes.
+    https://lwn.net/Articles/1016113/
+
+  - James Bottomley and James Morris, for their ongoing work on VSM-on-KVM,
+    which informed the design and direction of this series.
+
+Posted as an RFC to gather feedback on the VBS-on-KVM plane model and the
+VTL hypercall ABI. Comments welcome.
+
+Gerd Hoffmann (1):
+  q35: add virtio-mmio slots
+
+Joerg Roedel (11):
+  Update Linux Header for KVM Planes Support
+  ACPI: Rebuild ACPI tables on every read
+  accel/kvm: Extend KVMState to carry fds for planes
+  accel/kvm: Extend CPUState to handle Planes
+  accel: Add nr_planes() op
+  accel/kvm: Support nr_planes call-back
+  accel/kvm: Handle KVM_PLANE_EVENT_CREATE_CPU event
+  hw/core/machine: Add device-plane property
+  qdev: Add plane property
+  MSI: Inject into correct plane
+  KVM: Set GSI routes for default plane
+
+Oliver Steffen (1):
+  hw/uefi: Add hardware-info ID for virtio mmio devices for SVSM
+
+Sriram Nambakam (5):
+  kvm: add userspace handlers for VM planes and VBS VTL calls
+  vm_planes: Add VBS VTL call handling and plane memory sealing
+  linux-headers: sync kvm_para.h VBS VTL hypercalls
+  target/i386/kvm: run the secure plane in-kernel (Option B)
+  target/i386/kvm: read plane config via address_space API
+
+ accel/accel-system.c                        |  13 +
+ accel/kvm/kvm-all.c                         | 265 +++++++--
+ accel/kvm/trace-events                      |   2 +
+ dtc                                         |   1 +
+ hw/core/machine.c                           |  22 +
+ hw/core/qdev.c                              |  26 +
+ hw/i386/acpi-build.c                        |  13 +-
+ hw/i386/kvm/apic.c                          |   6 +-
+ hw/i386/pc.c                                |  18 +-
+ hw/i386/pc_q35.c                            |  15 +
+ hw/pci/msi.c                                |   3 +
+ hw/pci/msix.c                               |   3 +
+ include/accel/accel-ops.h                   |   3 +
+ include/hw/core/boards.h                    |   3 +
+ include/hw/core/cpu.h                       |  17 +-
+ include/hw/core/qdev.h                      |   5 +
+ include/hw/i386/pc.h                        |   1 +
+ include/hw/pci/msi.h                        |   1 +
+ include/hw/uefi/hardware-info.h             |   1 +
+ include/qemu/accel.h                        |   7 +
+ include/standard-headers/linux/kvm_para.h   |   7 +-
+ include/standard-headers/linux/typelimits.h |   6 +-
+ include/system/kvm.h                        |   7 +
+ include/system/kvm_int.h                    |  48 +-
+ linux-headers/linux/kvm.h                   |  34 ++
+ target/arm/kvm.c                            |   2 +-
+ target/i386/kvm/kvm.c                       | 618 ++++++++++++++++++++
+ tests/unit/test-qdev-global-props.c         |   5 +
+ ui/keycodemapdb                             |   1 +
+ 29 files changed, 1092 insertions(+), 61 deletions(-)
+ create mode 160000 dtc
+ create mode 160000 ui/keycodemapdb
+
+
+base-commit: 9f4d05a21f1d3a01c136979f4b60b7b02c60e821
+--
+2.55.0
+

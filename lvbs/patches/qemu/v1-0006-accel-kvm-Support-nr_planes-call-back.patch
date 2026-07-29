@@ -1,0 +1,70 @@
+From 3a1cf7b580728b83770a8f50424a52923c1ecde6 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Mon, 18 Aug 2025 15:29:24 +0000
+Subject: [RFC PATCH v1 06/18] accel/kvm: Support nr_planes
+ call-back
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+(cherry picked from commit ffa89f9048ee9c341fbdc29fd96a3fc0abe9d44b)
+---
+ accel/kvm/kvm-all.c | 19 +++++++++++++++++++
+ dtc                 |  1 +
+ ui/keycodemapdb     |  1 +
+ 3 files changed, 21 insertions(+)
+ create mode 160000 dtc
+ create mode 160000 ui/keycodemapdb
+
+diff --git a/accel/kvm/kvm-all.c b/accel/kvm/kvm-all.c
+index 4ebe531bfc..6b05550518 100644
+--- a/accel/kvm/kvm-all.c
++++ b/accel/kvm/kvm-all.c
+@@ -4231,6 +4231,24 @@ static bool kvm_accel_has_memory(AccelState *accel, AddressSpace *as,
+     return false;
+ }
+ 
++static uint8_t kvm_nr_planes(AccelState *accel, MachineState *ms)
++{
++    uint8_t nr_planes = 1;
++
++    // Planes are only supported with in-kernel APIC
++    if (kvm_irqchip_in_kernel()) {
++	    int ret;
++        KVMState *kvm = KVM_STATE(accel);
++
++        ret = kvm_vm_ioctl(kvm, KVM_CHECK_EXTENSION, KVM_CAP_PLANES);
++        if (ret > 0) {
++            nr_planes = ret;
++        }
++    }
++
++    return nr_planes;
++}
++
+ static void kvm_get_kvm_shadow_mem(Object *obj, Visitor *v,
+                                    const char *name, void *opaque,
+                                    Error **errp)
+@@ -4410,6 +4428,7 @@ static void kvm_accel_class_init(ObjectClass *oc, const void *data)
+     ac->init_machine = kvm_init;
+     ac->rebuild_guest = kvm_reset_vmfd;
+     ac->has_memory = kvm_accel_has_memory;
++    ac->nr_planes = kvm_nr_planes;
+     ac->allowed = &kvm_allowed;
+ 
+     object_class_property_add(oc, "kernel-irqchip", "on|off|split",
+diff --git a/dtc b/dtc
+new file mode 160000
+index 0000000000..b6910bec11
+--- /dev/null
++++ b/dtc
+@@ -0,0 +1 @@
++Subproject commit b6910bec11614980a21e46fbccc35934b671bd81
+diff --git a/ui/keycodemapdb b/ui/keycodemapdb
+new file mode 160000
+index 0000000000..d21009b1c9
+--- /dev/null
++++ b/ui/keycodemapdb
+@@ -0,0 +1 @@
++Subproject commit d21009b1c9f94b740ea66be8e48a1d8ad8124023
+-- 
+2.55.0
+

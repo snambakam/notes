@@ -1,0 +1,73 @@
+From d8e24ee88cf1fd6257f63c1cf067077c6d2ac648 Mon Sep 17 00:00:00 2001
+From: Joerg Roedel <joerg.roedel@amd.com>
+Date: Mon, 18 Aug 2025 12:26:24 +0000
+Subject: [RFC PATCH v1 05/18] accel: Add nr_planes() op
+
+Add a new accelerator operation to request the highest supported plane
+number of a given machine instance.
+
+Signed-off-by: Joerg Roedel <joerg.roedel@amd.com>
+(cherry picked from commit 590533080c60ed48dd86ed63d4e59d4832535ed9)
+---
+ accel/accel-system.c      | 13 +++++++++++++
+ include/accel/accel-ops.h |  3 +++
+ include/qemu/accel.h      |  7 +++++++
+ 3 files changed, 23 insertions(+)
+
+diff --git a/accel/accel-system.c b/accel/accel-system.c
+index 9176665202..1475afe20b 100644
+--- a/accel/accel-system.c
++++ b/accel/accel-system.c
+@@ -76,6 +76,19 @@ void accel_pre_resume(MachineState *ms, bool step_pending)
+     }
+ }
+ 
++uint8_t accel_nr_planes(MachineState *ms)
++{
++    AccelState *accel = ms->accelerator;
++    AccelClass *acc = ACCEL_GET_CLASS(accel);
++    uint8_t nr_planes = 1;
++
++    if (acc->nr_planes != NULL) {
++        nr_planes = acc->nr_planes(accel, ms);
++    }
++
++    return nr_planes;
++}
++
+ /* initialize the arch-independent accel operation interfaces */
+ void accel_init_ops_interfaces(AccelClass *ac)
+ {
+diff --git a/include/accel/accel-ops.h b/include/accel/accel-ops.h
+index 9f3f329c44..f44f8b63f8 100644
+--- a/include/accel/accel-ops.h
++++ b/include/accel/accel-ops.h
+@@ -38,6 +38,9 @@ struct AccelClass {
+     bool (*has_memory)(AccelState *accel, AddressSpace *as,
+                        hwaddr start_addr, hwaddr size);
+ 
++    /* planes related hooks */
++    uint8_t (*nr_planes)(AccelState *as, MachineState *ms);
++
+     bool *allowed;
+     /*
+      * Array of global properties that would be applied when specific
+diff --git a/include/qemu/accel.h b/include/qemu/accel.h
+index 6f65f1cb89..f82f45d2ba 100644
+--- a/include/qemu/accel.h
++++ b/include/qemu/accel.h
+@@ -86,4 +86,11 @@ typedef struct AccelGdbConfig {
+ 
+ bool accel_supports_guest_debug(AccelState *accel);
+ 
++/**
++ * accel_nr_planes:
++ *
++ * Returns the number of the highest support plane of a given MachineState.
++ */
++uint8_t accel_nr_planes(MachineState *ms);
++
+ #endif /* QEMU_ACCEL_H */
+-- 
+2.55.0
+

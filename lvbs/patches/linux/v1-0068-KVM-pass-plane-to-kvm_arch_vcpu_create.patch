@@ -1,0 +1,142 @@
+From 64dfbc02f16fe2ad3c9e5ab10ec01ee79f7a6b2f Mon Sep 17 00:00:00 2001
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Sun, 23 Mar 2025 21:40:17 +0100
+Subject: [RFC PATCH v1 068/132] KVM: pass plane to
+ kvm_arch_vcpu_create
+
+Pass the plane to architecture-specific code, so that it can also share
+backing data between plane 0 and the non-zero planes.
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+---
+ arch/arm64/kvm/arm.c       | 2 +-
+ arch/loongarch/kvm/vcpu.c  | 2 +-
+ arch/mips/kvm/mips.c       | 2 +-
+ arch/powerpc/kvm/powerpc.c | 2 +-
+ arch/riscv/kvm/vcpu.c      | 2 +-
+ arch/s390/kvm/kvm-s390.c   | 2 +-
+ arch/x86/kvm/x86.c         | 2 +-
+ include/linux/kvm_host.h   | 2 +-
+ virt/kvm/kvm_main.c        | 2 +-
+ 9 files changed, 9 insertions(+), 9 deletions(-)
+
+diff --git a/arch/arm64/kvm/arm.c b/arch/arm64/kvm/arm.c
+index a16ced5b4b4d..e5ca713458d5 100644
+--- a/arch/arm64/kvm/arm.c
++++ b/arch/arm64/kvm/arm.c
+@@ -538,7 +538,7 @@ int kvm_arch_vcpu_precreate(struct kvm *kvm, unsigned int id)
+ 	return 0;
+ }
+ 
+-int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
++int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu, struct kvm_plane *plane)
+ {
+ 	int err;
+ 
+diff --git a/arch/loongarch/kvm/vcpu.c b/arch/loongarch/kvm/vcpu.c
+index 76998851489c..2b92da93d63e 100644
+--- a/arch/loongarch/kvm/vcpu.c
++++ b/arch/loongarch/kvm/vcpu.c
+@@ -1507,7 +1507,7 @@ int kvm_arch_vcpu_precreate(struct kvm *kvm, unsigned int id)
+ 	return 0;
+ }
+ 
+-int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
++int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu, struct kvm_plane *plane)
+ {
+ 	unsigned long timer_hz;
+ 	struct loongarch_csrs *csr;
+diff --git a/arch/mips/kvm/mips.c b/arch/mips/kvm/mips.c
+index 9569c5e565d5..5623c6e5da0a 100644
+--- a/arch/mips/kvm/mips.c
++++ b/arch/mips/kvm/mips.c
+@@ -293,7 +293,7 @@ int kvm_arch_vcpu_precreate(struct kvm *kvm, unsigned int id)
+ 	return 0;
+ }
+ 
+-int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
++int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu, struct kvm_plane *plane)
+ {
+ 	int err, size;
+ 	void *gebase, *p, *handler, *refill_start, *refill_end;
+diff --git a/arch/powerpc/kvm/powerpc.c b/arch/powerpc/kvm/powerpc.c
+index ddd7a4fedac8..00312f36174f 100644
+--- a/arch/powerpc/kvm/powerpc.c
++++ b/arch/powerpc/kvm/powerpc.c
+@@ -771,7 +771,7 @@ static enum hrtimer_restart kvmppc_decrementer_wakeup(struct hrtimer *timer)
+ 	return HRTIMER_NORESTART;
+ }
+ 
+-int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
++int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu, struct kvm_plane *plane)
+ {
+ 	int err;
+ 
+diff --git a/arch/riscv/kvm/vcpu.c b/arch/riscv/kvm/vcpu.c
+index a984856d0bda..1a381d806c30 100644
+--- a/arch/riscv/kvm/vcpu.c
++++ b/arch/riscv/kvm/vcpu.c
+@@ -129,7 +129,7 @@ int kvm_arch_vcpu_precreate(struct kvm *kvm, unsigned int id)
+ 	return 0;
+ }
+ 
+-int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
++int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu, struct kvm_plane *plane)
+ {
+ 	int rc;
+ 
+diff --git a/arch/s390/kvm/kvm-s390.c b/arch/s390/kvm/kvm-s390.c
+index 544f112d6e5c..325da3c109b1 100644
+--- a/arch/s390/kvm/kvm-s390.c
++++ b/arch/s390/kvm/kvm-s390.c
+@@ -3810,7 +3810,7 @@ int kvm_arch_vcpu_precreate(struct kvm *kvm, unsigned int id)
+ 	return 0;
+ }
+ 
+-int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
++int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu, struct kvm_plane *plane)
+ {
+ 	struct sie_page *sie_page;
+ 	int rc;
+diff --git a/arch/x86/kvm/x86.c b/arch/x86/kvm/x86.c
+index 1d6433035008..df97d4c34c09 100644
+--- a/arch/x86/kvm/x86.c
++++ b/arch/x86/kvm/x86.c
+@@ -12883,7 +12883,7 @@ int kvm_arch_vcpu_precreate(struct kvm *kvm, unsigned int id)
+ 	return 0;
+ }
+ 
+-int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
++int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu, struct kvm_plane *plane)
+ {
+ 	int r;
+ 
+diff --git a/include/linux/kvm_host.h b/include/linux/kvm_host.h
+index 7e92d3abf931..9c177b25744c 100644
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -1769,7 +1769,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu);
+ void kvm_arch_vcpu_load(struct kvm_vcpu *vcpu, int cpu);
+ void kvm_arch_vcpu_put(struct kvm_vcpu *vcpu);
+ int kvm_arch_vcpu_precreate(struct kvm *kvm, unsigned int id);
+-int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu);
++int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu, struct kvm_plane *plane);
+ void kvm_arch_vcpu_postcreate(struct kvm_vcpu *vcpu);
+ void kvm_arch_vcpu_destroy(struct kvm_vcpu *vcpu);
+ 
+diff --git a/virt/kvm/kvm_main.c b/virt/kvm/kvm_main.c
+index a83b817d4e18..8d94c7020140 100644
+--- a/virt/kvm/kvm_main.c
++++ b/virt/kvm/kvm_main.c
+@@ -4404,7 +4404,7 @@ static int kvm_plane_ioctl_create_vcpu(struct kvm_plane *plane, unsigned long id
+ 
+ 	kvm_vcpu_init(vcpu, kvm, id);
+ 
+-	r = kvm_arch_vcpu_create(vcpu);
++	r = kvm_arch_vcpu_create(vcpu, plane);
+ 	if (r)
+ 		goto vcpu_free_common;
+ 
+-- 
+2.55.0
+

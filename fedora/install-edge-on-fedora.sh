@@ -30,3 +30,8 @@ sudo dnf update --refresh
 
 # Install Edge.
 sudo dnf install microsoft-edge-stable
+
+# Set Edge as the default browser and default handler for HTTP/HTTPS links.
+xdg-settings set default-web-browser microsoft-edge.desktop
+xdg-mime default microsoft-edge.desktop x-scheme-handler/http
+xdg-mime default microsoft-edge.desktop x-scheme-handler/https

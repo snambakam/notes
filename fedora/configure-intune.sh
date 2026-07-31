@@ -64,10 +64,41 @@ ConfigureSmartcardSettingsForUser() {
     fi
 }
 
+ConfigurePasswordComplexity() {
+    local PWQUALITY_CONF="/etc/security/pwquality.conf"
+    local PWQUALITY_BACKUP="${PWQUALITY_CONF}.orig"
+
+    echo "INFO: Configuring password complexity..."
+
+    if [[ -f "${PWQUALITY_BACKUP}" ]]; then
+        sudo mv "${PWQUALITY_BACKUP}" "${PWQUALITY_BACKUP}.$(date +%Y%m%d)"
+    fi
+    sudo cp -p "${PWQUALITY_CONF}" "${PWQUALITY_BACKUP}"
+
+    local settings=(
+        "minlen = 12"
+        "dcredit = -1"
+        "ucredit = -1"
+        "lcredit = -1"
+        "ocredit = -1"
+    )
+
+    local setting key
+    for setting in "${settings[@]}"; do
+        key="${setting%% =*}"
+        if grep -qE "^\s*${key}\s*=" "${PWQUALITY_CONF}"; then
+            sudo sed -i -E "s/^\s*${key}\s*=.*/${setting}/" "${PWQUALITY_CONF}"
+        else
+            echo "${setting}" | sudo tee -a "${PWQUALITY_CONF}" >/dev/null
+        fi
+    done
+}
+
 ShowUsage() {
-    echo "Usage: $0 [-c] [-i] [-h]"
+    echo "Usage: $0 [-c] [-i] [-p] [-h]"
     echo "    -c : Configure user environment (NSS DB + OpenSC PKCS#11 module)"
     echo "    -i : Install prerequisite packages"
+    echo "    -p : Configure password complexity (pwquality.conf)"
     echo "    -h : Show this help"
 }
 
@@ -75,7 +106,7 @@ ShowUsage() {
 # Main
 #
 
-optstring="ich"
+optstring="ichp"
 
 while getopts "${optstring}" arg; do
   case "${arg}" in
@@ -89,6 +120,10 @@ while getopts "${optstring}" arg; do
       ;;
     c)
       ConfigureSmartcardSettingsForUser
+      exit 0
+      ;;
+    p)
+      ConfigurePasswordComplexity
       exit 0
       ;;
     :)
@@ -105,4 +140,5 @@ done
 
 InstallRequiredPackages
 ConfigureSmartcardSettingsForUser
+ConfigurePasswordComplexity
 
